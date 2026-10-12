@@ -8,7 +8,7 @@ public sealed record ZapRunResult(int ExitCode, string Status, string? ReportPat
 
 public sealed class ZapCliRunner
 {
-    private readonly Func<DiagnosticToolSettings, ZapPackage, string, string, string, CancellationToken, Task<int>> _execute;
+    private readonly Func<DiagnosticToolSettings, ZapPackage, string, string, string, CancellationToken, Action<string>?, Task<int>> _execute;
     private readonly Func<EngagementProject, ZapPackage, CancellationToken, Task<ZapAuthVerification>>? _verifyAuthentication;
     private readonly bool _prepareAddons;
     public ZapCliRunner()
@@ -17,7 +17,7 @@ public sealed class ZapCliRunner
         _verifyAuthentication = new ZapAuthenticationVerifier().VerifyAsync;
         _prepareAddons = true;
     }
-    internal ZapCliRunner(Func<DiagnosticToolSettings, ZapPackage, string, string, string, CancellationToken, Task<int>> execute,
+    internal ZapCliRunner(Func<DiagnosticToolSettings, ZapPackage, string, string, string, CancellationToken, Action<string>?, Task<int>> execute,
         Func<EngagementProject, ZapPackage, CancellationToken, Task<ZapAuthVerification>>? verifyAuthentication = null) =>
         (_execute, _verifyAuthentication, _prepareAddons) = (execute, verifyAuthentication, false);
     public async Task<ZapRunResult> RunAsync(EngagementProject project, ZapPackage package,
@@ -84,7 +84,7 @@ public sealed class ZapCliRunner
             var environment = _prepareAddons
                 ? await new ZapAddonService().PrepareAsync(project, package.Directory, home, progress, cancellationToken, package.ActiveScan) : null;
             progress?.Report(package.ActiveScan ? "ZAP: アクティブ診断計画を検証しています。" : "ZAP: パッシブ診断計画を検証しています。");
-            var check = await _execute(settings, package, home, "-autocheck", "zap-check.log", cancellationToken);
+            var check = await _execute(settings, package, home, "-autocheck", "zap-check.log", cancellationToken, null);
             if (check is not (0 or 2))
                 throw new InvalidOperationException($"ZAP計画の検証に失敗しました（終了コード {check}）。zap-check.logを確認してください。");
             await ProjectPaths.VerifyAsync(project, package.PlanEvidence);
@@ -93,7 +93,12 @@ public sealed class ZapCliRunner
             progress?.Report(package.ActiveScan
                 ? $"ZAP: 保存済み通信を取り込み、承認済みURLへ強度{strength}のアクティブ診断を実行しています。"
                 : "ZAP: 保存済み通信のパッシブ解析を実行しています。");
-            var exit = await _execute(settings, package, home, "-autorun", "zap-run.log", cancellationToken);
+            var summarizer = new ZapOutputSummarizer(package.ActiveScan ? package.RecordedTargets : Array.Empty<string>(), reportJobProgress: true);
+            var exit = await _execute(settings, package, home, "-autorun", "zap-run.log", cancellationToken, line =>
+            {
+                var message = summarizer.Summarize(line);
+                if (message is not null) progress?.Report(message);
+            });
             if (environment is not null) await environment.VerifyAsync(cancellationToken);
             var report = Path.Combine(package.Directory, "reports", "zap-report.json");
             var status = exit is 0 or 2 && File.Exists(report) ? exit == 2 ? "warnings" : "completed" : "failed";
@@ -135,7 +140,7 @@ public sealed class ZapCliRunner
     }
 
     private static async Task<int> ExecuteAsync(DiagnosticToolSettings settings, ZapPackage package,
-        string home, string action, string logName, CancellationToken token)
+        string home, string action, string logName, CancellationToken token, Action<string>? onLine)
     {
         var start = new ProcessStartInfo(settings.JavaPath)
         {
@@ -153,14 +158,26 @@ public sealed class ZapCliRunner
             catch (InvalidOperationException) { }
             catch (System.ComponentModel.Win32Exception) { }
         });
-        await using var output = new StreamWriter(Path.Combine(package.Directory, logName), append: false);
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
+        // ZAPの出力は終了を待たずにログへ書き込み、停止・異常終了のときもそこまでの内容を残す。
+        await using var output = new StreamWriter(Path.Combine(package.Directory, logName), append: false) { AutoFlush = true };
+        var gate = new object();
+        void WriteLine(string line)
+        {
+            lock (gate) output.WriteLine(line);
+        }
+        async Task PumpAsync(StreamReader reader)
+        {
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                WriteLine(line);
+                onLine?.Invoke(line);
+            }
+        }
+        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput), PumpAsync(process.StandardError));
         try
         {
             await process.WaitForExitAsync(token);
-            await output.WriteAsync(await stdout);
-            await output.WriteAsync(await stderr);
+            await pumps;
             token.ThrowIfCancellationRequested();
             return process.ExitCode;
         }
@@ -168,8 +185,8 @@ public sealed class ZapCliRunner
         {
             try { if (!process.HasExited) process.Kill(true); } catch (InvalidOperationException) { }
             await process.WaitForExitAsync(CancellationToken.None);
-            await output.WriteAsync(await stdout);
-            await output.WriteAsync(await stderr);
+            try { await pumps.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }
             throw;
         }
     }

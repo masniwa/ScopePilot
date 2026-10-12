@@ -76,4 +76,43 @@ public sealed class LogWindowTests
         Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "Log UI check timed out.");
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
+
+    [Fact]
+    public void LogWindowFollowsTailWhileIdleAndHoldsSelection()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            LogWindow? window = null;
+            try
+            {
+                var current = "12:00:00  探索を開始しました。";
+                window = new LogWindow(() => current, _ => Task.FromResult("fixture.txt"));
+                var root = (FrameworkElement)window.Content;
+                var size = new Size(720, 420);
+                root.Measure(size);
+                root.Arrange(new Rect(size));
+                root.UpdateLayout();
+                var input = (TextBox)window.FindName("LogTextBox");
+                current = "12:00:05  ZAP: アクティブ診断を実行中（1/2）: http://example.test/sqli\r\n" + current;
+                window.FollowLatest();
+                Assert.Contains("アクティブ診断を実行中（1/2）", input.Text);
+                input.Select(0, 8);
+                var selected = input.SelectedText;
+                current = "12:00:06  ZAP: アクティブ診断を完了しました。\r\n" + current;
+                window.FollowLatest();
+                Assert.Equal(selected, input.SelectedText);
+                Assert.DoesNotContain("完了しました", input.Text);
+                input.Select(0, 0);
+                window.FollowLatest();
+                Assert.Contains("完了しました", input.Text);
+            }
+            catch (Exception ex) { failure = ex; }
+            finally { window?.Close(); Dispatcher.CurrentDispatcher.InvokeShutdown(); }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "Log follow check timed out.");
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
 }

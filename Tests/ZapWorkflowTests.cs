@@ -80,7 +80,7 @@ public sealed class ZapWorkflowTests
         Assert.DoesNotContain("type: replacer", plan);
 
         var calls = 0;
-        var runner = new ZapCliRunner(async (_, p, _, action, _, _) =>
+        var runner = new ZapCliRunner(async (_, p, _, action, _, _, _) =>
         {
             calls++;
             if (action == "-autorun")
@@ -117,7 +117,7 @@ public sealed class ZapWorkflowTests
         Assert.Contains("defaultStrength: Medium", plan);
         Assert.Contains("defaultThreshold: Low", plan);
         Assert.DoesNotContain("type: replacer", plan);
-        var runner = new ZapCliRunner(async (_, p, _, action, _, _) =>
+        var runner = new ZapCliRunner(async (_, p, _, action, _, _, _) =>
         {
             if (action == "-autorun")
                 await File.WriteAllTextAsync(Path.Combine(p.Directory, "reports", "zap-report.json"), "{\"site\":[]}");
@@ -216,7 +216,7 @@ public sealed class ZapWorkflowTests
 
         var calls = 0;
         var verifications = 0;
-        var runner = new ZapCliRunner(async (_, p, _, action, _, _) =>
+        var runner = new ZapCliRunner(async (_, p, _, action, _, _, _) =>
         {
             calls++;
             if (action == "-autorun")
@@ -235,7 +235,7 @@ public sealed class ZapWorkflowTests
         Assert.DoesNotContain("secret-value", authorization);
         Assert.Contains("\"verified\": true", authorization);
 
-        var refusing = new ZapCliRunner((_, _, _, _, _, _) => throw new InvalidOperationException("must not run"),
+        var refusing = new ZapCliRunner((_, _, _, _, _, _, _) => throw new InvalidOperationException("must not run"),
             (_, _, _) => Task.FromResult(new ZapAuthVerification("https://example.test/api", "https://example.test/login.php", 302, false, "ログイン画面へリダイレクトされました。")));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             refusing.RunAsync(project, package, null, CancellationToken.None, activeScanAcknowledged: true));
@@ -281,7 +281,7 @@ public sealed class ZapWorkflowTests
         await File.WriteAllTextAsync(project.DiagnosticTools.JavaPath, "test stub");
         var package = await new ZapHandoffService().BuildAsync(project);
         var actions = new List<string>();
-        var runner = new ZapCliRunner(async (_, p, _, action, _, _) =>
+        var runner = new ZapCliRunner(async (_, p, _, action, _, _, _) =>
         {
             actions.Add(action);
             if (action == "-autocheck") return 0;
@@ -307,9 +307,37 @@ public sealed class ZapWorkflowTests
         await File.WriteAllTextAsync(project.DiagnosticTools.JavaPath, "test stub");
         var package = await new ZapHandoffService().BuildAsync(project);
         using var token = new CancellationTokenSource();
-        var runner = new ZapCliRunner((_, _, _, _, _, _) => { token.Cancel(); throw new OperationCanceledException(); });
+        var runner = new ZapCliRunner((_, _, _, _, _, _, _) => { token.Cancel(); throw new OperationCanceledException(); });
         await Assert.ThrowsAsync<OperationCanceledException>(() => runner.RunAsync(project, package, null, token.Token));
         Assert.Contains("cancelled", await File.ReadAllTextAsync(Path.Combine(package.Directory, "zap-summary.json")));
+    }
+
+    [Fact]
+    public void ZapOutputSummarizerReportsJobProgressTargetsAndErrors()
+    {
+        var summarizer = new ZapOutputSummarizer(["http://example.test/vulnerabilities/sqli/", "http://example.test/vulnerabilities/xss_r/"], reportJobProgress: true);
+        Assert.Null(summarizer.Summarize("Job activeScan set url = http://example.test/vulnerabilities/sqli/"));
+        Assert.Null(summarizer.Summarize(""));
+        Assert.Equal("ZAP: 保存済み通信の取込を開始しました。", summarizer.Summarize("Job import started"));
+        Assert.Equal("ZAP: 保存済み通信の取込を完了しました（所要 00:00:01）。", summarizer.Summarize("Job import finished, time taken: 00:00:01"));
+        var running = summarizer.Summarize("Job activeScan started");
+        Assert.Contains("アクティブ診断を実行中（1/2）", running);
+        Assert.Contains("/vulnerabilities/sqli/", running);
+        Assert.Contains("(1/2)", summarizer.Summarize("Job activeScan finished, time taken: 00:02:40"));
+        Assert.Contains("(2/2)", summarizer.Summarize("Job activeScan started"));
+        Assert.Equal("ZAP: 計画の実行が完了しました。", summarizer.Summarize("Automation plan succeeded!"));
+        Assert.StartsWith("ZAP: ", summarizer.Summarize("910 [main] ERROR org.parosproxy.paros - boom"));
+        Assert.Null(summarizer.Summarize("Defaulting ZAP install dir to C:\\Program Files\\ZAP"));
+    }
+
+    [Fact]
+    public void ZapOutputSummarizerStaysQuietWhenProgressReportingIsOff()
+    {
+        var summarizer = new ZapOutputSummarizer(Array.Empty<string>(), reportJobProgress: false);
+        Assert.Null(summarizer.Summarize("Job activeScan started"));
+        Assert.Null(summarizer.Summarize("Job import finished, time taken: 00:00:01"));
+        Assert.StartsWith("ZAP: ", summarizer.Summarize("910 [main] ERROR org.parosproxy.paros - boom"));
+        Assert.Equal("ZAP: 計画の実行が完了しました。", summarizer.Summarize("Automation plan succeeded!"));
     }
 
     [Fact]

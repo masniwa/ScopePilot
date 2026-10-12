@@ -3,6 +3,7 @@ using ScopePilot.Services;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace ScopePilot;
 
@@ -11,6 +12,7 @@ public partial class LogWindow : Window
     private readonly Func<string> _readLog;
     private readonly Func<string, Task<string>> _saveLog;
     private readonly Func<string, Task<ClipboardCopyResult>> _copy;
+    private readonly DispatcherTimer _autoRefresh;
 
     internal LogWindow(Func<string> readLog, Func<string, Task<string>> saveLog,
         Func<string, Task<ClipboardCopyResult>>? copy = null)
@@ -18,15 +20,28 @@ public partial class LogWindow : Window
         _readLog = readLog;
         _saveLog = saveLog;
         _copy = copy ?? ClipboardService.CopyTextAsync;
+        _autoRefresh = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
+        _autoRefresh.Tick += (_, _) => FollowLatest();
         InitializeComponent();
         RefreshLog();
         SourceInitialized += (_, _) => ThemeService.Apply(this);
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
-        Closed += (_, _) => SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+        Closed += (_, _) => { _autoRefresh.Stop(); SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged; };
     }
 
     private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) =>
         Dispatcher.BeginInvoke(() => ThemeService.Apply(this));
+
+    // 先頭（最新）を表示している間だけ自動更新する。選択中や読み位置を下げている間は内容を保つ。
+    internal void FollowLatest()
+    {
+        if (LogTextBox.SelectionLength > 0 || LogTextBox.VerticalOffset > 2) return;
+        var latest = _readLog();
+        if (LogTextBox.Text == latest) return;
+        LogTextBox.Text = latest;
+        LogTextBox.CaretIndex = 0;
+        CopyAllButton.IsEnabled = SaveLogButton.IsEnabled = latest.Length > 0;
+    }
 
     internal void RefreshLog()
     {
