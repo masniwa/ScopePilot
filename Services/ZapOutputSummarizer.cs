@@ -28,8 +28,16 @@ internal sealed class ZapOutputSummarizer(IReadOnlyList<string> activeScanTarget
             return "ZAP: 計画の実行が完了しました。";
         if (trimmed.Contains("Automation plan ", StringComparison.Ordinal))
             return "ZAP: " + trimmed;
-        if (trimmed.Contains("ERROR", StringComparison.OrdinalIgnoreCase) || trimmed.Contains("FATAL", StringComparison.OrdinalIgnoreCase))
+        var attacking = Regex.Match(trimmed, @"DEBUG (\w+?ScanRule) - Attacking at Attack Strength: (\S+)$");
+        if (attacking.Success)
+            return $"ZAP: 診断ルールを実行中: {attacking.Groups[1].Value.Replace("ScanRule", "", StringComparison.Ordinal)}（強度{attacking.Groups[2].Value}）";
+        var alertFound = Regex.Match(trimmed, @"DEBUG ExtensionAlert - alertFound (.+) (\S+)$");
+        if (alertFound.Success)
+            return $"ZAP: 警告を検出: {alertFound.Groups[1].Value} {Shorten(alertFound.Groups[2].Value)}";
+        if (trimmed.Contains(" ERROR ", StringComparison.Ordinal) || trimmed.Contains(" FATAL ", StringComparison.Ordinal))
             return "ZAP: " + (trimmed.Length > 300 ? trimmed[..300] + "…" : trimmed);
+        if (trimmed.Contains(" WARN ", StringComparison.Ordinal))
+            return "ZAP: [警告] " + (trimmed.Length > 300 ? trimmed[..300] + "…" : trimmed);
         if (!reportJobProgress) return null;
         var started = Regex.Match(trimmed, @"^Job (\S+) started$");
         if (started.Success) return StartedMessage(started.Groups[1].Value);

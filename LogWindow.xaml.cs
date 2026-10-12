@@ -22,6 +22,7 @@ public partial class LogWindow : Window
         _copy = copy ?? ClipboardService.CopyTextAsync;
         _autoRefresh = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _autoRefresh.Tick += (_, _) => FollowLatest();
+        _autoRefresh.Start();
         InitializeComponent();
         RefreshLog();
         SourceInitialized += (_, _) => ThemeService.Apply(this);
@@ -31,6 +32,8 @@ public partial class LogWindow : Window
 
     private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) =>
         Dispatcher.BeginInvoke(() => ThemeService.Apply(this));
+
+    internal bool IsAutoRefreshRunning => _autoRefresh.IsEnabled;
 
     // 先頭（最新）を表示している間だけ自動更新する。選択中や読み位置を下げている間は内容を保つ。
     internal void FollowLatest()

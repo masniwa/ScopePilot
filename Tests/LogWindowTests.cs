@@ -88,6 +88,7 @@ public sealed class LogWindowTests
             {
                 var current = "12:00:00  探索を開始しました。";
                 window = new LogWindow(() => current, _ => Task.FromResult("fixture.txt"));
+                Assert.True(window.IsAutoRefreshRunning);
                 var root = (FrameworkElement)window.Content;
                 var size = new Size(720, 420);
                 root.Measure(size);

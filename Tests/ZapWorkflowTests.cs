@@ -325,8 +325,17 @@ public sealed class ZapWorkflowTests
         Assert.Contains("/vulnerabilities/sqli/", running);
         Assert.Contains("(1/2)", summarizer.Summarize("Job activeScan finished, time taken: 00:02:40"));
         Assert.Contains("(2/2)", summarizer.Summarize("Job activeScan started"));
+        Assert.Equal(
+            "ZAP: 診断ルールを実行中: PathTraversal（強度MEDIUM）",
+            summarizer.Summarize("2026-10-12 13:33:30,786 [ZAP-ActiveScanner-0] DEBUG PathTraversalScanRule - Attacking at Attack Strength: MEDIUM"));
+        var alertLine = summarizer.Summarize(
+            "2026-10-12 13:33:29,489 [ZAP-PassiveScan-9] DEBUG ExtensionAlert - alertFound Content Security Policy (CSP) Header Not Set http://example.test/vulnerabilities/csp/");
+        Assert.StartsWith("ZAP: 警告を検出: Content Security Policy (CSP) Header Not Set ", alertLine);
+        Assert.Contains("/vulnerabilities/csp/", alertLine);
+        Assert.StartsWith("ZAP: ", summarizer.Summarize("2026-10-12 13:33:31,000 [ZAP-PassiveScan-1] WARN  SqlScanRule - slow response"));
         Assert.Equal("ZAP: 計画の実行が完了しました。", summarizer.Summarize("Automation plan succeeded!"));
         Assert.StartsWith("ZAP: ", summarizer.Summarize("910 [main] ERROR org.parosproxy.paros - boom"));
+        Assert.StartsWith("ZAP: [警告] ", summarizer.Summarize("910 [main] WARN  org.zaproxy.zap.extension.ascan - deprecated option"));
         Assert.Null(summarizer.Summarize("Defaulting ZAP install dir to C:\\Program Files\\ZAP"));
     }
 

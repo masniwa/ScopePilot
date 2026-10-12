@@ -43,6 +43,8 @@ public sealed class InstalledZapTests
             Directory.CreateDirectory(output);
             foreach (var file in new[] { "zap-check.log", "zap-run.log", "zap-summary.json", "zap-passive.yaml" })
                 File.Copy(Path.Combine(package.Directory, file), Path.Combine(output, file), overwrite: true);
+            var zapLog = Path.Combine(package.Directory, "zap-home", "zap.log");
+            if (File.Exists(zapLog)) File.Copy(zapLog, Path.Combine(output, "zap-verbose.log"), overwrite: true);
             File.Copy(result.ReportPath!, Path.Combine(output, "zap-report.json"), overwrite: true);
         }
     }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using ScopePilot.Domain;
 
@@ -148,7 +149,7 @@ public sealed class ZapCliRunner
             RedirectStandardError = true, WorkingDirectory = package.Directory
         };
         foreach (var argument in new[] { "-jar", Path.GetFullPath(settings.ZapJarPath), "-cmd", "-silent",
-            "-dir", home, action, package.PlanPath }) start.ArgumentList.Add(argument);
+            "-loglevel", "DEBUG", "-dir", home, action, package.PlanPath }) start.ArgumentList.Add(argument);
         start.Environment["TEMP"] = home;
         start.Environment["TMP"] = home;
         using var process = Process.Start(start) ?? throw new IOException("ZAPを起動できませんでした。");
@@ -159,6 +160,8 @@ public sealed class ZapCliRunner
             catch (System.ComponentModel.Win32Exception) { }
         });
         // ZAPの出力は終了を待たずにログへ書き込み、停止・異常終了のときもそこまでの内容を残す。
+        // ZAPは -cmd 実行中、log4jの詳細を標準出力へ出さないため、-loglevel DEBUG で zap.log に
+        // 書かれた詳細（ルール単位の攻撃・警告検出・WARN/ERROR）を逐次読んで同じ進行窓へ流す。
         await using var output = new StreamWriter(Path.Combine(package.Directory, logName), append: false) { AutoFlush = true };
         var gate = new object();
         void WriteLine(string line)
@@ -173,7 +176,18 @@ public sealed class ZapCliRunner
                 onLine?.Invoke(line);
             }
         }
-        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput), PumpAsync(process.StandardError));
+        async Task TailZapLogAsync()
+        {
+            var zapLogPath = Path.Combine(home, "zap.log");
+            long offset = 0;
+            while (!process.HasExited)
+            {
+                await Task.Delay(400, CancellationToken.None);
+                offset = await PumpZapLogAsync(zapLogPath, offset, onLine);
+            }
+            await PumpZapLogAsync(zapLogPath, offset, onLine);
+        }
+        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput), PumpAsync(process.StandardError), TailZapLogAsync());
         try
         {
             await process.WaitForExitAsync(token);
@@ -188,6 +202,35 @@ public sealed class ZapCliRunner
             try { await pumps.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }
             throw;
+        }
+    }
+
+    // zap.logは稼働中に追記されるため、前回読んだ位置から末尾までの完全な行だけを流す。
+    // zap.logはJVM既定の文字コードで書かれる。転送対象の行はASCII中心のためLatin1でbyte一致読込する。
+    private static async Task<long> PumpZapLogAsync(string path, long offset, Action<string>? onLine)
+    {
+        try
+        {
+            if (!File.Exists(path)) return offset;
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (stream.Length < offset) return 0;
+            if (stream.Length == offset) return offset;
+            stream.Seek(offset, SeekOrigin.Begin);
+            using var reader = new StreamReader(stream, Encoding.Latin1);
+            var chunk = await reader.ReadToEndAsync();
+            var lastNewline = chunk.LastIndexOf('\n');
+            if (lastNewline < 0) return offset;
+            offset += Encoding.Latin1.GetByteCount(chunk[..(lastNewline + 1)]);
+            foreach (var line in chunk[..lastNewline].Split('\n'))
+            {
+                var trimmed = line.TrimEnd('\r');
+                if (trimmed.Length > 0) onLine?.Invoke(trimmed);
+            }
+            return offset;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return offset;
         }
     }
 }
