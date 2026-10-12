@@ -105,9 +105,11 @@ public sealed class CoreServicesTests
         Directory.CreateDirectory(Path.Combine(temp.Path, "runs", id.ToString("N"), "run-1"));
         await File.WriteAllTextAsync(Path.Combine(temp.Path, "projects", $"{id:N}.json"), "{}");
         await File.WriteAllTextAsync(Path.Combine(temp.Path, "runs", id.ToString("N"), "run-1", "evidence.jsonl"), "{}\n");
-        var backup = await new DataManagementService(temp.Path).CreateBackupAsync(id, "test");
+        var project = new EngagementProject { Id = id, ProjectFilePath = Path.Combine(temp.Path, "project.scopepilot.json") };
+        await new ProjectStore().SaveAsync(project);
+        var backup = await new DataManagementService().CreateBackupAsync(project);
         using var archive = ZipFile.OpenRead(backup);
-        Assert.Contains(archive.Entries, x => x.FullName == $"projects/{id:N}.json");
+        Assert.Contains(archive.Entries, x => x.FullName == "project.scopepilot.json");
         Assert.Contains(archive.Entries, x => x.FullName.EndsWith("evidence.jsonl"));
     }
 

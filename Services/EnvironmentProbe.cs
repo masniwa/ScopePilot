@@ -6,14 +6,31 @@ namespace ScopePilot.Services;
 
 public sealed class EnvironmentProbe
 {
-    public async Task<IReadOnlyList<EnvironmentCheck>> CheckAsync()
+    public const string NodeNotFoundMessage = "Node.jsが見つかりません。Node.jsのインストール先または SCOPEPILOT_NODE_PATH（node.exe のフルパス）を確認してください。";
+    public async Task<IReadOnlyList<EnvironmentCheck>> CheckAsync(EngagementProject? project = null)
     {
         var codexPath = ResolveExecutable("codex.exe", FindCodexInstallations());
-        var nodePath = ResolveExecutable("node.exe", [Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe")]);
+        var nodePath = FindNode();
         var npxPath = ResolveExecutable("npx.cmd", [Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "npx.cmd")]);
         var codex = await ProbeAsync("Codex CLI", codexPath, "--version");
         var node = await ProbeAsync("Node.js", nodePath, "--version");
         var npm = await ProbeAsync("npm / npx", npxPath, "--version");
+        if (project is not null)
+        {
+            try
+            {
+                var selected = await ExplorationProxyService.SelectAsync(project.ExplorationProxy, ExplorationProxyService.ProbeBurpProxyAsync);
+                if (selected == ExplorationProxyMode.Zap)
+                    return [codex, node, npm,
+                        new EnvironmentCheck("探索用ZAP", File.Exists(project.DiagnosticTools.ZapJarPath),
+                            "ZAPのJAR: " + project.DiagnosticTools.ZapJarPath),
+                        new EnvironmentCheck("ZAP用Java", File.Exists(project.DiagnosticTools.JavaPath),
+                            "Java: " + project.DiagnosticTools.JavaPath)];
+                return [codex, node, npm, new EnvironmentCheck("探索用Burp", true,
+                    $"接続先: {project.ExplorationProxy.BurpProxyUrl}。Burp履歴MCPは任意です。")];
+            }
+            catch (Exception ex) { return [codex, node, npm, new EnvironmentCheck("探索用プロキシ", false, ex.Message)]; }
+        }
         var burp = await ProbeTcpAsync("Burp MCP", "127.0.0.1", 9876, "BurpのMCPタブでサーバーを有効化してください");
         var burpProxy = await ProbeTcpAsync("Burp Proxy", "127.0.0.1", 8080, "BurpのProxy settingsでListenerを有効化してください");
         var proxyJar = BurpProxyLocation.Resolve();
@@ -81,12 +98,47 @@ public sealed class EnvironmentProbe
         {
             try
             {
-                var candidate = Path.Combine(directory.Trim(), fileName);
+                var candidate = Path.Combine(directory.Trim().Trim('"'), fileName);
                 if (File.Exists(candidate)) return candidate;
             }
             catch { /* Broken PATH entries are ignored. */ }
         }
         return null;
+    }
+
+    public static string? FindNode() => ResolveNode(
+        Environment.GetEnvironmentVariable("SCOPEPILOT_NODE_PATH"), AppContext.BaseDirectory,
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        new[] { EnvironmentVariableTarget.Process, EnvironmentVariableTarget.User, EnvironmentVariableTarget.Machine }
+            .Select(target => Environment.GetEnvironmentVariable("PATH", target)));
+
+    internal static string? ResolveNode(string? configuredPath, string applicationDirectory, string programFiles,
+        string localApplicationData, string userProfile, IEnumerable<string?> pathValues)
+    {
+        var preferred = new[]
+        {
+            configuredPath?.Trim().Trim('"') ?? "",
+            Path.Combine(applicationDirectory, "tools", "node", "node.exe"),
+            Path.Combine(programFiles, "nodejs", "node.exe"),
+            Path.Combine(localApplicationData, "Programs", "nodejs", "node.exe")
+        };
+        foreach (var path in preferred) if (File.Exists(path)) return Path.GetFullPath(path);
+        foreach (var directory in pathValues.SelectMany(value => (value ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var path = Path.Combine(directory.Trim().Trim('"'), "node.exe");
+                if (Path.IsPathFullyQualified(path) && File.Exists(path)) return path;
+            }
+            catch (ArgumentException) { /* Ignore malformed PATH entries. */ }
+        }
+        // Optional local runtime installed with the Codex desktop workspace dependencies.
+        // An installed Node.js or an explicit selection always takes precedence.
+        var bundled = Path.Combine(userProfile, ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "bin", "node.exe");
+        return File.Exists(bundled) ? bundled : null;
     }
 
     private static IEnumerable<string> FindCodexInstallations()

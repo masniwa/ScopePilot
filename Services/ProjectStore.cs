@@ -4,11 +4,6 @@ using ScopePilot.Domain;
 
 namespace ScopePilot.Services;
 
-public sealed record SavedProjectInfo(Guid Id, string Name, string StartUrl, DateTimeOffset UpdatedAt)
-{
-    public string DisplayName => $"{Name}  |  {StartUrl}  |  {UpdatedAt:yyyy/MM/dd HH:mm}";
-}
-
 public sealed class ProjectStore
 {
     private readonly JsonSerializerOptions _options = new()
@@ -16,60 +11,55 @@ public sealed class ProjectStore
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter() }
     };
-
-    public string DataDirectory { get; } = Path.Combine(ScopePilotDataPaths.RootDirectory, "projects");
+    public string Snapshot(EngagementProject project) => JsonSerializer.Serialize(project, _options);
 
     public async Task SaveAsync(EngagementProject project)
     {
-        Directory.CreateDirectory(DataDirectory);
+        var directory = ProjectPaths.Root(project);
+        ProjectPaths.CheckProjectFile(project);
+        Directory.CreateDirectory(directory);
+        ProjectPaths.EnsureChild(directory, project.ProjectFilePath);
         project.UpdatedAt = DateTimeOffset.Now;
-        var path = Path.Combine(DataDirectory, $"{project.Id:N}.json");
-        await using var stream = File.Create(path);
-        await JsonSerializer.SerializeAsync(stream, project, _options);
-    }
-
-    public async Task<EngagementProject?> LoadLatestAsync()
-    {
-        if (!Directory.Exists(DataDirectory)) return null;
-        var file = new DirectoryInfo(DataDirectory).GetFiles("*.json")
-            .OrderByDescending(x => x.LastWriteTimeUtc).FirstOrDefault();
-        if (file is null) return null;
-        await using var stream = file.OpenRead();
-        return await JsonSerializer.DeserializeAsync<EngagementProject>(stream, _options);
-    }
-
-    public async Task<EngagementProject?> LoadAsync(Guid id)
-    {
-        var path = Path.Combine(DataDirectory, $"{id:N}.json");
-        if (!File.Exists(path)) return null;
-        await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<EngagementProject>(stream, _options);
-    }
-
-    public async Task<IReadOnlyList<SavedProjectInfo>> ListAsync()
-    {
-        if (!Directory.Exists(DataDirectory)) return [];
-        var projects = new List<SavedProjectInfo>();
-        foreach (var file in new DirectoryInfo(DataDirectory).GetFiles("*.json"))
+        var temporary = project.ProjectFilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
         {
-            try
-            {
-                await using var stream = file.OpenRead();
-                using var document = await JsonDocument.ParseAsync(stream);
-                var root = document.RootElement;
-                var id = root.TryGetProperty("Id", out var idValue) && idValue.TryGetGuid(out var parsedId)
-                    ? parsedId : Guid.ParseExact(Path.GetFileNameWithoutExtension(file.Name), "N");
-                var name = root.TryGetProperty("Name", out var nameValue) ? nameValue.GetString() ?? "名称未設定" : "名称未設定";
-                var startUrl = root.TryGetProperty("StartUrl", out var startValue) ? startValue.GetString() ?? string.Empty : string.Empty;
-                var updatedAt = root.TryGetProperty("UpdatedAt", out var updatedValue) && updatedValue.TryGetDateTimeOffset(out var parsedUpdatedAt)
-                    ? parsedUpdatedAt : file.LastWriteTime;
-                projects.Add(new(id, name, startUrl, updatedAt));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException)
-            {
-                // A broken or partially-written project must not hide other saved projects.
-            }
+            var snapshot = JsonSerializer.SerializeToNode(project, _options)!;
+            foreach (var collection in new[] { "ApiRequests", "Findings" })
+                foreach (var item in snapshot[collection]!.AsArray())
+                    if (item?["SourceRunDirectory"]?.GetValue<string>() is { Length: > 0 } path)
+                        item["SourceRunDirectory"] = ProjectPaths.Relative(project, path);
+            await File.WriteAllTextAsync(temporary, snapshot.ToJsonString(_options));
+            File.Move(temporary, project.ProjectFilePath, overwrite: true);
         }
-        return projects.OrderByDescending(x => x.UpdatedAt).ToArray();
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+
+    public async Task<EngagementProject> LoadAsync(string path)
+    {
+        path = Path.GetFullPath(path);
+        ProjectPaths.EnsureChild(Path.GetDirectoryName(path)!, path);
+        await using var stream = File.OpenRead(path);
+        var project = await JsonSerializer.DeserializeAsync<EngagementProject>(stream, _options)
+            ?? throw new InvalidDataException("プロジェクトファイルが空です。");
+        if (project.FormatVersion != 1) throw new InvalidDataException("未対応のプロジェクト形式です。");
+        project.ProjectFilePath = path;
+        ProjectPaths.CheckProjectFile(project);
+        project.ApiRequests ??= [];
+        project.Findings ??= [];
+        project.Inputs ??= [];
+        project.BrunoVerifications ??= [];
+        project.ExplorationDocument ??= new();
+        project.ExplorationProxy ??= new();
+        if (project.ExplorationDocument.Source is { } source) _ = ProjectPaths.Resolve(project, source.LocalPath);
+        foreach (var reference in project.Inputs) _ = ProjectPaths.Resolve(project, reference.LocalPath);
+        foreach (var verification in project.BrunoVerifications) _ = ProjectPaths.Resolve(project, verification.Exchange.LocalPath);
+        foreach (var item in project.ApiRequests)
+            item.SourceRunDirectory = ResolveStoredPath(project, item.SourceRunDirectory);
+        foreach (var item in project.Findings)
+            item.SourceRunDirectory = ResolveStoredPath(project, item.SourceRunDirectory);
+        return project;
+    }
+
+    public static string ResolveStoredPath(EngagementProject project, string path) => string.IsNullOrWhiteSpace(path)
+        ? "" : ProjectPaths.Resolve(project, path);
 }

@@ -16,4 +16,5 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup><ProjectReference Include="..\ScopePilot.csproj" /></ItemGroup>
+  <ItemGroup><None Update="crawl-integration.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

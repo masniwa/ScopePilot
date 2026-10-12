@@ -21,3 +21,9 @@ engagement.json
 runs/
 projects/
 *.local.json
+*.scopepilot.json
+inputs/
+exports/
+reports/
+backups/
+outputs/

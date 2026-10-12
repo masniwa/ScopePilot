@@ -5,110 +5,83 @@ namespace ScopePilot.Services;
 
 public sealed record ProjectDataSummary(int FileCount, long TotalBytes, int RunCount, int ExportCount, int ReportCount)
 {
-    public string Display => $"保存データ: {FileCount:N0}ファイル / {FormatBytes(TotalBytes)}　探索実行 {RunCount:N0}件　Burp出力 {ExportCount:N0}件　レポート {ReportCount:N0}件";
-
-    private static string FormatBytes(long bytes) => bytes switch
-    {
-        >= 1024L * 1024 * 1024 => $"{bytes / (1024d * 1024 * 1024):N2} GB",
-        >= 1024L * 1024 => $"{bytes / (1024d * 1024):N1} MB",
-        >= 1024 => $"{bytes / 1024d:N1} KB",
-        _ => $"{bytes:N0} B"
-    };
+    public string Display => $"プロジェクト: {FileCount:N0}ファイル / {TotalBytes / 1024d:N1} KB　実行 {RunCount}件　引き渡し {ExportCount}件　レポート {ReportCount}件";
 }
 
 public sealed class DataManagementService
 {
-    private readonly string _root;
-
-    public DataManagementService(string? root = null) => _root = root ?? ScopePilotDataPaths.RootDirectory;
-
-    public string RootDirectory => _root;
-
-    public string? FindLatestBurpExportDirectory(Guid projectId, InputMode mode)
+    public string? FindLatestZapDirectory(EngagementProject project)
     {
-        var directory = ProjectDirectory("exports", projectId);
-        if (!Directory.Exists(directory)) return null;
+        if (string.IsNullOrWhiteSpace(project.ProjectFilePath)) return null;
+        var runs = ProjectPaths.Category(project, "runs");
+        if (!Directory.Exists(runs)) return null;
+        return Directory.EnumerateDirectories(runs).Where(x => File.Exists(Path.Combine(x, "zap-summary.json")))
+            .OrderByDescending(Directory.GetLastWriteTimeUtc).FirstOrDefault();
+    }
+    public string? FindLatestBurpExportDirectory(EngagementProject project, InputMode mode)
+    {
+        if (string.IsNullOrWhiteSpace(project.ProjectFilePath)) return null;
+        var directory = ProjectPaths.Category(project, "exports");
         var marker = mode == InputMode.ApiDocument ? "api-requests.json" : "burp-scope.json";
-        try
-        {
-            return new DirectoryInfo(directory).EnumerateDirectories()
-                .Where(x => File.Exists(Path.Combine(x.FullName, marker)))
-                .OrderByDescending(x => x.LastWriteTimeUtc).Select(x => x.FullName).FirstOrDefault();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        return !Directory.Exists(directory) ? null : Directory.EnumerateDirectories(directory)
+            .Where(x => File.Exists(Path.Combine(x, marker)))
+            .OrderByDescending(Directory.GetLastWriteTimeUtc).FirstOrDefault();
     }
 
-    public Task<ProjectDataSummary> GetSummaryAsync(Guid projectId)
+    public Task<ProjectDataSummary> GetSummaryAsync(EngagementProject project)
     {
-        var files = ProjectFiles(projectId).Where(File.Exists).Select(path => new FileInfo(path)).ToArray();
-        return Task.FromResult(new ProjectDataSummary(files.Length, files.Sum(x => x.Length),
-            CountDirectories("runs", projectId), CountDirectories("exports", projectId), CountDirectories("reports", projectId)));
+        if (string.IsNullOrWhiteSpace(project.ProjectFilePath)) return Task.FromResult(new ProjectDataSummary(0, 0, 0, 0, 0));
+        var files = Files(ProjectPaths.Root(project)).Select(x => new FileInfo(x)).ToArray();
+        int Count(string category) => Directory.Exists(ProjectPaths.Category(project, category))
+            ? Directory.EnumerateDirectories(ProjectPaths.Category(project, category)).Count() : 0;
+        return Task.FromResult(new ProjectDataSummary(files.Length, files.Sum(x => x.Length), Count("runs"), Count("exports"), Count("reports")));
     }
 
-    public async Task<string> CreateBackupAsync(Guid projectId, string projectName)
+    public async Task<string> CreateBackupAsync(EngagementProject project)
     {
-        var backupDirectory = Path.Combine(_root, "backups");
-        Directory.CreateDirectory(backupDirectory);
-        var safeName = string.Concat((string.IsNullOrWhiteSpace(projectName) ? "ScopePilot" : projectName)
-            .Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
-        var path = Path.Combine(backupDirectory, $"{safeName}-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.zip");
-        await using var stream = File.Create(path);
+        var root = ProjectPaths.Root(project);
+        var directory = ProjectPaths.Category(project, "backups");
+        Directory.CreateDirectory(directory);
+        var path = ProjectPaths.Resolve(project, $"backups/project-{DateTimeOffset.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zip");
+        var files = Files(root).Where(x => !Path.GetRelativePath(root, x).StartsWith("backups" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)).ToArray();
+        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
-        foreach (var file in ProjectFiles(projectId).Where(File.Exists))
+        foreach (var file in files)
         {
-            var relative = Path.GetRelativePath(_root, file).Replace('\\', '/');
-            var entry = archive.CreateEntry(relative, CompressionLevel.Optimal);
-            await using var input = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var entry = archive.CreateEntry(ProjectPaths.Relative(project, file), CompressionLevel.Optimal);
+            await using var input = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.Read);
             await using var output = entry.Open();
             await input.CopyToAsync(output);
         }
         return path;
     }
 
-    public Task DeleteRunAsync(Guid projectId, string runDirectory)
+    public Task DeleteRunAsync(EngagementProject project, string runDirectory)
     {
-        var projectRuns = ProjectDirectory("runs", projectId);
-        var target = Path.GetFullPath(runDirectory);
-        EnsureChild(projectRuns, target);
-        if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
+        ProjectPaths.EnsureChild(ProjectPaths.Category(project, "runs"), runDirectory);
+        DeleteChecked(ProjectPaths.Root(project), runDirectory);
         return Task.CompletedTask;
     }
-
-    public Task DeleteGeneratedArtifactsAsync(Guid projectId)
+    public Task DeleteGeneratedArtifactsAsync(EngagementProject project)
     {
-        foreach (var category in new[] { "exports", "reports" })
-        {
-            var target = ProjectDirectory(category, projectId);
-            EnsureChild(Path.Combine(_root, category), target);
-            if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
-        }
+        foreach (var category in new[] { "exports", "reports" }) DeleteChecked(ProjectPaths.Root(project), ProjectPaths.Category(project, category));
         return Task.CompletedTask;
     }
-
-    private IEnumerable<string> ProjectFiles(Guid projectId)
+    private static void DeleteChecked(string root, string path)
     {
-        var projectFile = Path.Combine(_root, "projects", $"{projectId:N}.json");
-        if (File.Exists(projectFile)) yield return projectFile;
-        foreach (var category in new[] { "runs", "exports", "reports" })
+        ProjectPaths.EnsureChild(root, path);
+        if (!Directory.Exists(path)) return;
+        _ = Files(path).ToArray(); // Reject junctions before recursive deletion.
+        Directory.Delete(path, true);
+    }
+    private static IEnumerable<string> Files(string root)
+    {
+        if (!Directory.Exists(root)) yield break;
+        foreach (var path in Directory.EnumerateFileSystemEntries(root))
         {
-            var directory = ProjectDirectory(category, projectId);
-            if (!Directory.Exists(directory)) continue;
-            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)) yield return file;
+            ProjectPaths.EnsureChild(root, path);
+            if (Directory.Exists(path)) { foreach (var child in Files(path)) yield return child; }
+            else yield return path;
         }
-    }
-
-    private int CountDirectories(string category, Guid projectId)
-    {
-        var directory = ProjectDirectory(category, projectId);
-        return Directory.Exists(directory) ? Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly).Count() : 0;
-    }
-
-    private string ProjectDirectory(string category, Guid projectId) => Path.Combine(_root, category, projectId.ToString("N"));
-
-    private static void EnsureChild(string parent, string target)
-    {
-        var root = Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase) || target.Equals(root, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("削除対象が案件データの保存範囲外です。");
     }
 }

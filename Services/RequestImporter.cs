@@ -41,7 +41,8 @@ public sealed class RequestImporter
                 StatusCode = response.ValueKind == JsonValueKind.Object && response.TryGetProperty("status", out var status)
                     ? status.GetInt32() : null,
                 ContentType = contentType,
-                Source = "HAR"
+                Source = "HAR",
+                ObservedAt = entry.TryGetProperty("startedDateTime", out var time) && time.TryGetDateTimeOffset(out var stamp) ? stamp : DateTimeOffset.Now
             });
         }
         return result;

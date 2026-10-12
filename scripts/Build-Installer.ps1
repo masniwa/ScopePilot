@@ -35,7 +35,7 @@ if (-not $SkipPublish) {
 }
 $artifactsRoot = Join-Path $projectRoot 'artifacts'
 $publishDirectory = Join-Path $artifactsRoot "ScopePilot-$Version-$Runtime"
-foreach ($relative in @('ScopePilot.exe','ScopePilot.dll','VERSION.txt','LICENSE','THIRD-PARTY-NOTICES.md','tools\fast-crawl.js','tools\playwright-runtime\node_modules\@playwright\mcp\cli.js')) {
+foreach ($relative in @('ScopePilot.exe','ScopePilot.dll','VERSION.txt','LICENSE','THIRD-PARTY-NOTICES.md','tools\fast-crawl.js','tools\zap-browser-record.js','tools\playwright-runtime\node_modules\@playwright\mcp\cli.js')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $relative))) { throw "Incomplete payload: $relative" }
 }
 & (Join-Path $PSScriptRoot 'Test-DistributionLicenses.ps1') -PublishDirectory $publishDirectory -Runtime $Runtime -ProjectRoot $projectRoot

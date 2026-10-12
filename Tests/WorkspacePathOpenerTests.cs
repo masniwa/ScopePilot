@@ -8,15 +8,6 @@ namespace ScopePilot.Tests;
 public sealed class WorkspacePathOpenerTests
 {
     [Fact]
-    public void DataRoot_UsesConfiguredDirectory_AndDefaultsToLocalApplicationData()
-    {
-        using var temp = new TempDirectory();
-        Assert.Equal(Path.GetFullPath(temp.Path), ScopePilotDataPaths.ResolveRoot(temp.Path));
-        Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ScopePilot"),
-            ScopePilotDataPaths.ResolveRoot(null));
-    }
-
-    [Fact]
     public void FolderOpening_PassesFullPathWithSpacesAndJapaneseAsOneExplorerArgument()
     {
         using var temp = new TempDirectory();
@@ -45,7 +36,8 @@ public sealed class WorkspacePathOpenerTests
     {
         using var temp = new TempDirectory();
         var id = Guid.NewGuid();
-        var root = Path.Combine(temp.Path, "exports", id.ToString("N"));
+        var project = new EngagementProject { Id = id, ProjectFilePath = Path.Combine(temp.Path, "project.scopepilot.json") };
+        var root = Path.Combine(temp.Path, "exports");
         var olderApi = Path.Combine(root, "api-old");
         var newerApi = Path.Combine(root, "api-new");
         var web = Path.Combine(root, "web");
@@ -56,10 +48,10 @@ public sealed class WorkspacePathOpenerTests
         await File.WriteAllTextAsync(Path.Combine(web, "burp-scope.json"), "{}");
         Directory.SetLastWriteTimeUtc(olderApi, DateTime.UtcNow.AddMinutes(-3));
         Directory.SetLastWriteTimeUtc(newerApi, DateTime.UtcNow.AddMinutes(-2));
-        var service = new DataManagementService(temp.Path);
-        Assert.Equal(newerApi, service.FindLatestBurpExportDirectory(id, InputMode.ApiDocument));
-        Assert.Equal(web, service.FindLatestBurpExportDirectory(id, InputMode.WebExploration));
-        Assert.Null(service.FindLatestBurpExportDirectory(Guid.NewGuid(), InputMode.ApiDocument));
+        var service = new DataManagementService();
+        Assert.Equal(newerApi, service.FindLatestBurpExportDirectory(project, InputMode.ApiDocument));
+        Assert.Equal(web, service.FindLatestBurpExportDirectory(project, InputMode.WebExploration));
+        Assert.Null(service.FindLatestBurpExportDirectory(new EngagementProject(), InputMode.ApiDocument));
     }
 
     private sealed class TempDirectory : IDisposable

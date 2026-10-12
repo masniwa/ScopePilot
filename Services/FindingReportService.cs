@@ -6,26 +6,35 @@ using ScopePilot.Domain;
 namespace ScopePilot.Services;
 
 public sealed record FindingReportResult(string Directory, string JsonPath, string HtmlPath, string CandidateChecklistPath,
-    int FindingCount, int CandidateCount);
+    int FindingCount, int CandidateCount)
+{
+    public string MarkdownPath { get; init; } = "";
+    public int AlertGroupCount { get; init; }
+    public int UntranslatedGroupCount { get; init; }
+    public int UnavailableEvidenceCount { get; init; }
+}
 
 public sealed class FindingReportService
 {
-    private readonly string _reportsDirectory;
+    private readonly string? _reportsDirectory;
 
-    public FindingReportService(string? reportsDirectory = null) => _reportsDirectory = reportsDirectory ?? Path.Combine(ScopePilotDataPaths.RootDirectory, "reports");
+    public FindingReportService(string? reportsDirectory = null) => _reportsDirectory = reportsDirectory;
 
     public async Task<FindingReportResult> ExportAsync(EngagementProject project)
     {
-        var root = Path.Combine(_reportsDirectory, project.Id.ToString("N"));
+        var root = _reportsDirectory is null ? ProjectPaths.Category(project, "reports") : Path.Combine(_reportsDirectory, project.Id.ToString("N"));
         var directory = Path.Combine(root, DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss-fff"));
         Directory.CreateDirectory(directory);
         var jsonPath = Path.Combine(directory, "engagement-report.json");
         var htmlPath = Path.Combine(directory, "engagement-report.html");
         var checklistPath = Path.Combine(directory, "candidate-review.tsv");
+        var markdownPath = Path.Combine(directory, "engagement-report.ja.md");
+        var generatedAt = DateTimeOffset.Now;
+        var japaneseReport = await new JapaneseDiagnosticReportService().BuildAsync(project, generatedAt);
         var selected = project.Candidates.Where(x => x.Selected).ToArray();
         var payload = new
         {
-            generatedAt = DateTimeOffset.Now,
+            generatedAt,
             projectId = project.Id,
             projectName = project.Name,
             startUrl = project.StartUrl,
@@ -37,18 +46,34 @@ public sealed class FindingReportService
             coverage = BuildCoverage(project),
             selectedCandidates = selected.Select(CandidatePayload),
             excludedCandidates = project.Candidates.Where(x => !x.Selected).Select(CandidatePayload),
-            findings = project.Findings,
+            findings = project.Findings.Select(x => ProjectPaths.PortableRunObject(project, x)),
+            brunoVerifications = project.BrunoVerifications,
+            toolObservations = project.DiagnosticObservations,
             disclaimer = "本レポートは探索時点の観測に基づく対象選定と所見の整理です。脆弱性の確定には診断担当者による再現確認が必要です。"
         };
         await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
         await File.WriteAllTextAsync(htmlPath, BuildHtml(project), new UTF8Encoding(false));
+        await File.WriteAllTextAsync(markdownPath, japaneseReport.Markdown, new UTF8Encoding(false));
+        // Summarize imported tool results and their source references.
+        await File.WriteAllTextAsync(Path.Combine(directory, "diagnostic-summary.json"), JsonSerializer.Serialize(new
+        {
+            version = 1,
+            unconfirmedToolAlertCount = project.DiagnosticObservations.Count,
+            toolObservations = project.DiagnosticObservations.Select(x => new { x.Tool, x.RuleId, x.Severity, x.Confidence,
+                x.Method, x.Url, x.Parameter, x.Role, state = x.State.ToString(), x.Evidence }),
+            limitations = new[] { "外部診断ツールの警告を整理した結果です。内容の判断は診断担当者が行います。" }
+        }, new JsonSerializerOptions { WriteIndented = true }));
         await File.WriteAllLinesAsync(checklistPath,
             new[] { "Selected\tDecision\tConfidence\tCategory\tMethod\tURL\tRole\tSimilarCount\tReason\tDiagnosticCaution\tGuidelineBasis" }
                 .Concat(project.Candidates.Select(x => string.Join('\t',
                     x.Selected, Clean(x.Decision), Clean(x.Confidence), Clean(x.Category), Clean(x.Representative.Method),
                     Clean(x.Representative.Url), Clean(x.Representative.Role), x.SimilarCount, Clean(x.Reason),
                     Clean(x.DiagnosticCaution), Clean(x.GuidelineBasis)))), new UTF8Encoding(true));
-        return new(directory, jsonPath, htmlPath, checklistPath, project.Findings.Count, selected.Length);
+        return new(directory, jsonPath, htmlPath, checklistPath, project.Findings.Count, selected.Length)
+        {
+            MarkdownPath = markdownPath, AlertGroupCount = japaneseReport.AlertGroupCount,
+            UntranslatedGroupCount = japaneseReport.UntranslatedGroupCount, UnavailableEvidenceCount = japaneseReport.UnavailableEvidenceCount
+        };
     }
 
     private static object CandidatePayload(DiagnosticCandidate candidate) => new
@@ -111,6 +136,7 @@ public sealed class FindingReportService
         sb.Append("</tbody></table>");
 
         sb.Append("<h2>診断所見</h2>");
+        sb.Append($"<p>取り込んだツール警告: {project.DiagnosticObservations.Count}件。内容は診断担当者が確認してください。</p>");
         if (project.Findings.Count == 0) sb.Append("<p>探索結果から取り込まれた診断所見はありません。候補一覧は診断実施時の作業対象として確認してください。</p>");
         foreach (var finding in project.Findings)
         {

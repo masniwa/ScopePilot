@@ -8,7 +8,7 @@ using ScopePilot.Services;
 
 namespace ScopePilot.ViewModels;
 
-public sealed class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject
 {
     private readonly ProjectStore _store = new();
     private readonly RequestImporter _importer = new();
@@ -35,7 +35,6 @@ public sealed class MainViewModel : ObservableObject
     private string _interventionText = string.Empty;
     private DiagnosticCandidate? _selectedCandidate;
     private DiagnosticFinding? _selectedFinding;
-    private SavedProjectInfo? _selectedSavedProject;
     private ExplorationRunSummary? _selectedRun;
     private string _candidateSearch = string.Empty;
     private string _candidateReviewFilter = "すべて";
@@ -51,16 +50,17 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
-        SaveCommand = new AsyncRelayCommand(SaveAsync);
+        InitializeWordReportCommands();
+        SaveCommand = new AsyncRelayCommand(SaveAsync, () => !IsRunning);
         NewProjectCommand = new AsyncRelayCommand(NewProjectAsync, () => !IsRunning);
-        LoadProjectCommand = new AsyncRelayCommand(LoadProjectAsync, () => !IsRunning && SelectedSavedProject is not null);
+        LoadProjectCommand = new AsyncRelayCommand(LoadProjectAsync, () => !IsRunning);
         OpenRunFolderCommand = new RelayCommand(OpenSelectedRunFolder, () => SelectedRun is not null);
-        RetrySelectedRunCommand = new AsyncRelayCommand(RetrySelectedRunAsync, () => !IsRunning && SelectedRun is not null);
+        RetrySelectedRunCommand = new AsyncRelayCommand(RetrySelectedRunAsync, () => !IsRunning && SelectedRun is { Tool: "ScopePilot" });
         CheckEnvironmentCommand = new AsyncRelayCommand(CheckEnvironmentAsync);
         SetupMcpCommand = new AsyncRelayCommand(SetupMcpAsync, () => !IsRunning && !IsApiMode);
         BuildExplorationPackageCommand = new AsyncRelayCommand(BuildExplorationPackageAsync, () => !IsRunning);
         StartExplorationCommand = new AsyncRelayCommand(StartExplorationAsync, () => !IsRunning);
-        StopExplorationCommand = new RelayCommand(StopExploration, () => IsRunning);
+        StopExplorationCommand = new RelayCommand(StopExploration, () => IsRunning && !IsWordConversionRunning);
         ResumeExplorationCommand = new RelayCommand(ResumeExploration, () => IsRunning && Project.Status == ProjectStatus.WaitingForHuman);
         GenerateCandidatesCommand = new RelayCommand(GenerateCandidates);
         ResetCandidateDecisionsCommand = new AsyncRelayCommand(ResetCandidateDecisionsAsync, () => !IsRunning);
@@ -75,13 +75,13 @@ public sealed class MainViewModel : ObservableObject
         ExportFindingsCommand = new AsyncRelayCommand(ExportFindingsAsync, () => !IsRunning);
         RefreshDataSummaryCommand = new AsyncRelayCommand(RefreshDataSummaryAsync);
         BackupProjectCommand = new AsyncRelayCommand(BackupProjectAsync, () => !IsRunning);
-        OpenDataFolderCommand = new RelayCommand(() => OpenRunPath(_dataManagement.RootDirectory, "データフォルダー"));
+        OpenDataFolderCommand = new RelayCommand(() => OpenProjectFolder());
         CopyApiRequestCommand = new RelayCommand(CopyApiRequest, () => !IsRunning && SelectedApiRequest is not null);
+        ClearExplorationDocumentCommand = new RelayCommand(ClearExplorationDocument, () => !IsRunning && HasExplorationDocument);
     }
 
     public EngagementProject Project { get => _project; private set { PrepareProject(value); if (SetProperty(ref _project, value)) RefreshSummary(); } }
     public ObservableCollection<string> Logs { get; } = [];
-    public ObservableCollection<SavedProjectInfo> SavedProjects { get; } = [];
     public ObservableCollection<ExplorationRunSummary> RunHistory { get; } = [];
     public ObservableCollection<string> RoleOptions { get; } = [];
     public ObservableCollection<DiagnosticCandidate> FilteredCandidates { get; } = [];
@@ -112,6 +112,10 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand BackupProjectCommand { get; }
     public RelayCommand OpenDataFolderCommand { get; }
     public RelayCommand CopyApiRequestCommand { get; }
+    public RelayCommand ClearExplorationDocumentCommand { get; }
+    public bool HasExplorationDocument => !string.IsNullOrWhiteSpace(Project.ExplorationDocument.Content);
+    public string ExplorationDocumentName => HasExplorationDocument
+        ? $"{Project.ExplorationDocument.FileName}（{Project.ExplorationDocument.Content.Length:N0}文字）" : "ドキュメント未選択";
     public bool IsApiMode => Project.Mode == InputMode.ApiDocument;
     public int ProjectModeIndex
     {
@@ -136,14 +140,25 @@ public sealed class MainViewModel : ObservableObject
     public string ExecutionNavigationText => IsApiMode ? "2   API生成" : "2   探索";
     public string ExecutionNextText => IsApiMode ? "API生成へ進む →" : "探索へ進む →";
     public string RequestLimitLabel => IsApiMode ? "最大生成リクエスト数" : "最大通信数";
+    public bool CrawlFormSubmissions
+    {
+        get => Project.EnableFormSubmissions;
+        set
+        {
+            if (Project.EnableFormSubmissions == value) return;
+            Project.EnableFormSubmissions = value;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
+    }
     public string ReviewPageTag => IsApiMode ? "8" : "3";
     public string ReviewNavigationText => IsApiMode ? "3   APIリクエスト" : "3   候補レビュー";
     public string RoleHelpText => IsApiMode ? "選択ロールを生成リクエストへ記録します。認証情報は下書きの置換値を確認して補完してください。"
-        : "未認証以外では、Codexがログイン画面を開いた後に手動操作を求めます。認証後は同じブラウザセッションで探索を続けます。";
+        : "認証画面を検出すると、ロールに関係なく認証情報の入力を案内します。同じ探索ブラウザでログインし、アプリで再開してください。";
     public string RunModeDescription => IsApiMode
         ? "読み込んだAPIドキュメントをAIで解釈し、未送信のリクエストを作成します。［APIリクエスト］で仮値と本文を確認・編集して採用してください。"
-        : "まず高速クローラで収集し、動的な代表パターンをAIで確認します。ログインなどの手動操作が必要になったら、ここに案内が表示されます。";
-    public string BurpExportActionText => IsApiMode ? "HTTPリクエストを出力" : "Scope出力を生成";
+        : "まず高速クローラで収集し、動的な代表パターンをAIで確認します。案件設定で選択した仕様書・操作手順もAIが参照します。ログインなどの手動操作が必要になったら、ここに案内が表示されます。";
+    public string BurpExportActionText => IsZapTarget ? "ZAPパッケージを出力" : IsApiMode ? "HTTPリクエストを出力" : "Scope出力を生成";
     public string BurpListHeader => IsApiMode ? "Burp RepeaterへのHTTPリクエスト出力" : "登録用URL正規表現";
     public string BurpPageDescription => IsApiMode ? "採用したAPIリクエストをHTTPテキストとして出力し、Burp Repeaterへ貼り付けます。"
         : "採用した候補を出力し、Burp SuiteのScopeへ登録します。";
@@ -161,12 +176,44 @@ public sealed class MainViewModel : ObservableObject
         if (IsRunning) return;
         try
         {
+            await EnsureProjectAsync();
+            var source = await ProjectPaths.ImportAsync(Project, path, "api-document");
+            path = ProjectPaths.Resolve(Project, source.LocalPath);
             Project.ApiDocument = await ApiDocumentService.ReadDocumentAsync(path, Project.ApiDocument);
+            Project.Inputs.Add(source with { Role = Project.ActiveRole });
             RefreshModeProperties();
-            await SaveAsync();
+            await RecordProjectChangeAsync();
             Log($"APIドキュメントを読み込みました: {ApiDocumentName}");
         }
         catch (Exception ex) { Log($"APIドキュメントの読込に失敗しました: {ex.Message}"); }
+    }
+
+    public async Task ReadExplorationDocumentAsync(string path)
+    {
+        if (IsRunning) return;
+        try
+        {
+            await EnsureProjectAsync();
+            var document = await ExplorationDocumentService.ImportAsync(Project, path);
+            Project.ExplorationDocument = document;
+            Project.Inputs.Add(document.Source!);
+            RefreshModeProperties();
+            await RecordProjectChangeAsync();
+            Log($"探索用ドキュメントを読み込みました: {ExplorationDocumentName}");
+        }
+        catch (Exception ex)
+        {
+            Log($"探索用ドキュメントの読込に失敗しました: {ex.Message}");
+            ShowProjectError?.Invoke($"探索用ドキュメントを読み込めませんでした。{Environment.NewLine}{ex.Message}");
+        }
+    }
+
+    private void ClearExplorationDocument()
+    {
+        Project.ExplorationDocument = new();
+        RefreshModeProperties();
+        RefreshSaveState();
+        Log("探索で参照するドキュメントの指定を解除しました。");
     }
 
     public async Task SaveApiRequestChangesAsync()
@@ -190,11 +237,12 @@ public sealed class MainViewModel : ObservableObject
 
     private void RefreshModeProperties()
     {
-        foreach (var name in new[] { nameof(IsApiMode), nameof(ProjectModeIndex), nameof(ApiProviderIndex), nameof(ApiDocumentName), nameof(StartActionText),
+        foreach (var name in new[] { nameof(IsApiMode), nameof(ProjectModeIndex), nameof(ExplorationProxyModeIndex), nameof(ApiProviderIndex), nameof(ApiDocumentName), nameof(ExplorationDocumentName), nameof(HasExplorationDocument), nameof(StartActionText),
             nameof(RunModeDescription), nameof(BurpExportActionText), nameof(BurpListHeader), nameof(ApiRequestSummary), nameof(SummaryText), nameof(ReviewPageTag), nameof(ReviewNavigationText), nameof(RoleHelpText),
-            nameof(ExecutionPageHeader), nameof(ExecutionNavigationText), nameof(ExecutionNextText), nameof(RequestLimitLabel), nameof(BurpPageDescription), nameof(BurpModeDescription) }) RaisePropertyChanged(name);
+            nameof(ExecutionPageHeader), nameof(ExecutionNavigationText), nameof(ExecutionNextText), nameof(RequestLimitLabel), nameof(BurpPageDescription), nameof(BurpModeDescription), nameof(HandoffDescription) }) RaisePropertyChanged(name);
         RaisePropertyChanged(nameof(Project));
         SetupMcpCommand.RaiseCanExecuteChanged();
+        ClearExplorationDocumentCommand.RaiseCanExecuteChanged();
     }
     public bool IsRunning
     {
@@ -202,6 +250,10 @@ public sealed class MainViewModel : ObservableObject
         private set
         {
             if (!SetProperty(ref _isRunning, value)) return;
+            RefreshWordReportCommands();
+            RaisePropertyChanged(nameof(CanEditExplorationSettings));
+            SaveCommand.RaiseCanExecuteChanged();
+            ClearExplorationDocumentCommand.RaiseCanExecuteChanged();
             StartExplorationCommand.RaiseCanExecuteChanged();
             NewProjectCommand.RaiseCanExecuteChanged();
             LoadProjectCommand.RaiseCanExecuteChanged();
@@ -217,17 +269,12 @@ public sealed class MainViewModel : ObservableObject
             SetupMcpCommand.RaiseCanExecuteChanged();
             BuildExplorationPackageCommand.RaiseCanExecuteChanged();
             CopyApiRequestCommand.RaiseCanExecuteChanged();
+            StartZapCommand.RaiseCanExecuteChanged();
+            PrepareZapAddonsCommand.RaiseCanExecuteChanged();
+            RecordZapBrowserCommand.RaiseCanExecuteChanged();
         }
     }
     public string InterventionText { get => _interventionText; private set => SetProperty(ref _interventionText, value); }
-    public SavedProjectInfo? SelectedSavedProject
-    {
-        get => _selectedSavedProject;
-        set
-        {
-            if (SetProperty(ref _selectedSavedProject, value)) LoadProjectCommand.RaiseCanExecuteChanged();
-        }
-    }
     public ExplorationRunSummary? SelectedRun
     {
         get => _selectedRun;
@@ -265,41 +312,21 @@ public sealed class MainViewModel : ObservableObject
     public string ConsoleText => string.Join(Environment.NewLine, Logs);
     public string LatestLog => Logs.FirstOrDefault() ?? "案件を設定して探索を開始してください。";
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync()
     {
-        try
-        {
-            Project = await _store.LoadLatestAsync() ?? new EngagementProject();
-            PrepareProject(Project);
-            UpdateRoleOptions();
-            ResetBurpHandoff();
-            if (Project.Status is ProjectStatus.Crawling or ProjectStatus.WaitingForHuman or ProjectStatus.Organizing)
-            {
-                Project.Status = Project.Requests.Count > 0 ? ProjectStatus.Partial : ProjectStatus.Paused;
-                await _store.SaveAsync(Project);
-                Log("前回の未完了ジョブを検出しました。保存済みデータを保持して再試行可能な状態へ復旧しました。");
-            }
-            var removedStartUrlCache = RemoveStartUrlFromDeferredCache();
-            Log(Project.CreatedAt == Project.UpdatedAt ? "新規案件を開始しました。" : "直近の案件を復元しました。");
-            if (removedStartUrlCache)
-                Log("開始URLに誤って登録されていた除外キャッシュを削除しました。");
-            if (Project.Requests.Count > 0 && !IsApiMode)
-            {
-                GenerateCandidates();
-                await _store.SaveAsync(Project);
-                Log("最新のURLパターン規則で診断対象候補を再生成しました。");
-            }
-            await RefreshSavedProjectsAsync(Project.Id);
-            await RefreshRunHistoryAsync();
-            await RefreshDataSummaryAsync();
-        }
-        catch (Exception ex) { Log($"案件の復元に失敗しました: {ex.Message}"); }
+        UpdateRoleOptions();
+        Log("プロジェクトファイルを作成または開いてください。");
+        RefreshSummary();
+        return Task.CompletedTask;
     }
-
     public async Task<int> ImportAsync(string path)
     {
         try
         {
+            await EnsureProjectAsync();
+            var source = await ProjectPaths.ImportAsync(Project, path, Path.GetExtension(path).Equals(".har", StringComparison.OrdinalIgnoreCase) ? "har" : "requests");
+            path = ProjectPaths.Resolve(Project, source.LocalPath);
+            Project.Inputs.Add(source with { Role = Project.ActiveRole });
             Log($"取込開始: {path}");
             var imported = await _importer.ImportAsync(path);
             foreach (var request in Project.Requests) RequestImporter.Normalize(request);
@@ -320,7 +347,7 @@ public sealed class MainViewModel : ObservableObject
             }
             Log($"{imported.Count:N0}件を読み取り、{added:N0}件を追加しました。");
             GenerateCandidates();
-            await SaveAsync();
+            await RecordProjectChangeAsync();
             return imported.Count;
         }
         catch (Exception ex) { Log($"取込失敗 ({ex.GetType().Name}): {ex.Message}{Environment.NewLine}{ex.StackTrace}"); return 0; }
@@ -328,25 +355,20 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task SaveAsync()
     {
-        try
-        {
-            var valid = IsConfigurationValid();
-            if (!valid) Project.Status = ProjectStatus.Draft;
-            else if (Project.Status is ProjectStatus.Draft or ProjectStatus.Failed) Project.Status = ProjectStatus.Ready;
-            await _store.SaveAsync(Project);
-            UpdateSavedProjectSummary();
-            Log($"案件を保存しました: {_store.DataDirectory}"); RefreshSummary();
-        }
-        catch (Exception ex) { Log($"保存失敗: {ex.Message}"); }
+        if (IsRunning) return;
+        var valid = IsConfigurationValid();
+        if (!valid) Project.Status = ProjectStatus.Draft;
+        else if (Project.Status is ProjectStatus.Draft or ProjectStatus.Failed) Project.Status = ProjectStatus.Ready;
+        await SaveCurrentProjectAsync();
+        RefreshSummary();
     }
-
-    public async Task SaveCandidateDecisionAsync(DiagnosticCandidate candidate)
+    public async Task UpdateCandidateDecisionAsync(DiagnosticCandidate candidate)
     {
         UpdateCandidateDecisionCache(candidate);
-        await SaveAsync();
+        await RecordProjectChangeAsync();
         Log(candidate.Selected
-            ? $"候補を採用キャッシュへ保存しました: {candidate.Pattern}"
-            : $"候補を除外キャッシュへ保存しました: {candidate.Pattern}");
+            ? $"候補の採用を変更しました（未保存）: {candidate.Pattern}"
+            : $"候補の除外を変更しました（未保存）: {candidate.Pattern}");
         RefreshFilteredCandidates();
     }
 
@@ -386,7 +408,7 @@ public sealed class MainViewModel : ObservableObject
             candidate.Selected = selected;
             UpdateCandidateDecisionCache(candidate);
         }
-        await _store.SaveAsync(Project);
+        await RecordProjectChangeAsync();
         Log($"表示中の候補{targets.Length:N0}件を{(selected ? "一括採用" : "一括除外")}しました。");
         RefreshFilteredCandidates();
         RefreshSummary();
@@ -396,7 +418,7 @@ public sealed class MainViewModel : ObservableObject
     {
         Project.Guidelines ??= new GuidelineSelectionOptions();
         GenerateCandidates();
-        await SaveAsync();
+        await RecordProjectChangeAsync();
         Log("参照ガイドラインの変更を候補選定と案件設定へ反映しました。");
     }
 
@@ -410,94 +432,15 @@ public sealed class MainViewModel : ObservableObject
         Project.ExplicitlyReviewedCandidatePatterns.Clear();
         Project.Candidates.Clear();
         GenerateCandidates();
-        await _store.SaveAsync(Project);
+        await RecordProjectChangeAsync();
         Log($"候補判定の保存記録を解除しました: 採用{adoptedCount:N0}件、除外{deferredCount:N0}件、確認済み{reviewedCount:N0}件。現在の観測通信から候補を再生成しました。");
         RefreshSummary();
-    }
-
-    private async Task NewProjectAsync()
-    {
-        try
-        {
-            await _store.SaveAsync(Project);
-            Project = new EngagementProject();
-            UpdateRoleOptions();
-            CandidateSearch = string.Empty;
-            SetCandidateReviewFilter("すべて");
-            ResetBurpHandoff();
-            _currentRunDirectory = null;
-            InterventionText = string.Empty;
-            SelectedCandidate = null;
-            SelectedFinding = null;
-            Logs.Clear();
-            RaisePropertyChanged(nameof(ConsoleText));
-            await _store.SaveAsync(Project);
-            await RefreshSavedProjectsAsync(Project.Id);
-            await RefreshRunHistoryAsync();
-            await RefreshDataSummaryAsync();
-            Log("新しい案件を開始しました。観測通信、診断候補、実行ログを初期化しました。");
-            RefreshSummary();
-        }
-        catch (Exception ex) { Log($"新しい案件を開始できませんでした: {ex.Message}"); }
-    }
-
-    private async Task LoadProjectAsync()
-    {
-        if (SelectedSavedProject is null) return;
-        try
-        {
-            await _store.SaveAsync(Project);
-            var loaded = await _store.LoadAsync(SelectedSavedProject.Id);
-            if (loaded is null)
-            {
-                Log("選択した案件ファイルが見つかりません。案件一覧を更新します。");
-                await RefreshSavedProjectsAsync(Project.Id);
-                return;
-            }
-            PrepareProject(loaded);
-            Project = loaded;
-            UpdateRoleOptions();
-            CandidateSearch = string.Empty;
-            SetCandidateReviewFilter("すべて");
-            ResetBurpHandoff();
-            _currentRunDirectory = null;
-            InterventionText = string.Empty;
-            SelectedCandidate = null;
-            SelectedFinding = null;
-            Logs.Clear();
-            RaisePropertyChanged(nameof(ConsoleText));
-            if (Project.Requests.Count > 0 && !IsApiMode) GenerateCandidates();
-            await _store.SaveAsync(Project);
-            await RefreshSavedProjectsAsync(Project.Id);
-            await RefreshRunHistoryAsync();
-            await RefreshDataSummaryAsync();
-            Log($"保存済み案件を開きました: {Project.Name}（観測{Project.Requests.Count:N0}件、候補{Project.Candidates.Count:N0}件、所見{Project.Findings.Count:N0}件）");
-            RefreshSummary();
-        }
-        catch (Exception ex) { Log($"案件を開けませんでした: {ex.Message}"); }
-    }
-
-    private async Task RefreshSavedProjectsAsync(Guid selectedId)
-    {
-        var projects = await _store.ListAsync();
-        SavedProjects.Clear();
-        foreach (var project in projects) SavedProjects.Add(project);
-        SelectedSavedProject = SavedProjects.FirstOrDefault(x => x.Id == selectedId) ?? SavedProjects.FirstOrDefault();
-    }
-
-    private void UpdateSavedProjectSummary()
-    {
-        var existing = SavedProjects.FirstOrDefault(x => x.Id == Project.Id);
-        if (existing is not null) SavedProjects.Remove(existing);
-        var current = new SavedProjectInfo(Project.Id, Project.Name, Project.StartUrl, Project.UpdatedAt);
-        SavedProjects.Insert(0, current);
-        SelectedSavedProject = current;
     }
 
     private async Task RefreshRunHistoryAsync()
     {
         var selectedId = SelectedRun?.RunId;
-        var runs = await _runHistoryService.ListAsync(Project.Id);
+        var runs = await _runHistoryService.ListAsync(Project);
         RunHistory.Clear();
         foreach (var run in runs) RunHistory.Add(run);
         SelectedRun = RunHistory.FirstOrDefault(x => x.RunId == selectedId) ?? RunHistory.FirstOrDefault();
@@ -506,7 +449,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task RefreshDataSummaryAsync()
     {
-        try { DataSummaryText = (await _dataManagement.GetSummaryAsync(Project.Id)).Display; }
+        try { DataSummaryText = (await _dataManagement.GetSummaryAsync(Project)).Display; }
         catch (Exception ex) { DataSummaryText = $"保存データを集計できませんでした: {ex.Message}"; }
     }
 
@@ -514,8 +457,8 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
-            await _store.SaveAsync(Project);
-            LastBackupPath = await _dataManagement.CreateBackupAsync(Project.Id, Project.Name);
+            await RecordProjectChangeAsync();
+            LastBackupPath = await _dataManagement.CreateBackupAsync(Project);
             Log($"案件バックアップを作成しました: {LastBackupPath}");
             await RefreshDataSummaryAsync();
         }
@@ -528,7 +471,12 @@ public sealed class MainViewModel : ObservableObject
         var target = SelectedRun;
         try
         {
-            await _dataManagement.DeleteRunAsync(Project.Id, target.Directory);
+            await _dataManagement.DeleteRunAsync(Project, target.Directory);
+            var prefix = ProjectPaths.Relative(Project, target.Directory).TrimEnd('/') + "/";
+            foreach (var input in Project.Inputs.Where(x => x.LocalPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray()) Project.Inputs.Remove(input);
+            foreach (var draft in Project.ApiRequests.Where(x => x.SourceRunDirectory == target.Directory)) draft.SourceRunDirectory = "";
+            foreach (var finding in Project.Findings.Where(x => x.SourceRunDirectory == target.Directory)) finding.SourceRunDirectory = "";
+            await RecordProjectChangeAsync();
             Log($"探索実行データを削除しました: {target.StartedAtDisplay}");
             await RefreshRunHistoryAsync();
             await RefreshDataSummaryAsync();
@@ -540,7 +488,7 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
-            await _dataManagement.DeleteGeneratedArtifactsAsync(Project.Id);
+            await _dataManagement.DeleteGeneratedArtifactsAsync(Project);
             ResetBurpHandoff();
             Log("現在の案件のBurp出力とレポートを削除しました。案件、観測通信、探索実行履歴は保持しています。");
             await RefreshDataSummaryAsync();
@@ -602,7 +550,12 @@ public sealed class MainViewModel : ObservableObject
 
     private static void PrepareProject(EngagementProject project)
     {
+        project.ExplorationDocument ??= new ExplorationDocumentSettings();
+        project.ExplorationProxy ??= new ExplorationProxySettings();
         project.ApiDocument ??= new ApiDocumentSettings();
+        project.DiagnosticTools ??= new DiagnosticToolSettings();
+        project.Inputs ??= [];
+        project.DiagnosticObservations ??= [];
         project.ApiRequests ??= [];
         project.Guidelines ??= new GuidelineSelectionOptions();
         project.Requests ??= [];
@@ -650,13 +603,14 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
         Log("環境チェックを開始します。");
-        foreach (var item in await _environment.CheckAsync()) Log($"[{(item.Available ? "OK" : "要設定")}] {item.Name}: {item.Detail}");
+        foreach (var item in await _environment.CheckAsync(Project)) Log($"[{(item.Available ? "OK" : "要設定")}] {item.Name}: {item.Detail}");
     }
 
     private async Task SetupMcpAsync()
     {
+        if (!await TryEnsureProjectAsync()) return;
         Log("CodexへのMCP登録を開始します。");
-        var result = await _mcpSetup.ConfigureAsync();
+        var result = await _mcpSetup.ConfigureAsync(Project);
         foreach (var message in result.Messages) Log(message);
         Log(result.Success ? "MCPの登録が完了しました。Codexを再起動すると設定が反映されます。" : "MCP登録に失敗しました。上記ログを確認してください。");
     }
@@ -665,7 +619,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (IsApiMode)
         {
-            try { var directory = await _apiDocuments.BuildAsync(Project); await SaveAsync(); await RefreshRunHistoryAsync(); await RefreshDataSummaryAsync(); Log($"API生成パッケージを準備しました: {directory}"); }
+            try { var directory = await _apiDocuments.BuildAsync(Project); await RecordProjectChangeAsync(); await RefreshRunHistoryAsync(); await RefreshDataSummaryAsync(); Log($"API生成パッケージを準備しました: {directory}"); }
             catch (Exception ex) { Log($"API生成パッケージを準備できませんでした: {ex.Message}"); }
             return;
         }
@@ -680,6 +634,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task StartApiDocumentAsync()
     {
+        if (!await TryEnsureProjectAsync()) return;
         IsRunning = true;
         _currentRunDirectory = null;
         _runCancellation = new CancellationTokenSource();
@@ -691,7 +646,7 @@ public sealed class MainViewModel : ObservableObject
             SetRunProgress("API入力準備", 10, "APIドキュメントと生成条件を保存しています。");
             _currentRunDirectory = await _apiDocuments.BuildAsync(Project);
             Project.Status = ProjectStatus.Organizing;
-            await _store.SaveAsync(Project);
+            await RecordProjectChangeAsync();
             RefreshSummary();
             SetRunProgress("APIリクエスト生成", 35, $"{Project.ApiDocument.Provider}が文書のAPI定義を読み取っています。");
             var result = await _apiRunner.RunAsync(_currentRunDirectory, Project.ApiDocument.Provider, new Progress<string>(Log), _runCancellation.Token);
@@ -736,7 +691,7 @@ public sealed class MainViewModel : ObservableObject
             _runCancellation.Dispose();
             _runCancellation = null;
             RefreshSummary();
-            try { await _store.SaveAsync(Project); await RefreshRunHistoryAsync(); await RefreshDataSummaryAsync(); }
+            try { await RecordProjectChangeAsync(); await RefreshRunHistoryAsync(); await RefreshDataSummaryAsync(); }
             catch (Exception ex) { Log($"API実行の保存・履歴更新に失敗しました: {ex.Message}"); }
         }
     }
@@ -754,48 +709,52 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task StartExplorationAsync()
     {
+        if (!await TryEnsureProjectAsync()) return;
         if (IsApiMode) { await StartApiDocumentAsync(); return; }
         UpdateRoleOptions();
         SetRunProgress("環境確認", 2, "MCPと実行環境を確認しています。");
         Log($"探索対象ロール: {Project.ActiveRole}");
-        Log("MCP設定を確認しています。");
-        var setup = await _mcpSetup.ConfigureAsync();
-        foreach (var message in setup.Messages) Log(message);
-        if (!setup.Success)
-        {
-            Project.Status = ProjectStatus.Failed;
-            SetRunProgress("開始失敗", 0, "MCP設定を準備できませんでした。実行ログを確認してください。");
-            RefreshSummary();
-            Log("MCP設定を準備できないため探索を開始しませんでした。");
-            return;
-        }
-
-        var path = await BuildPackageAsync();
-        if (path is null) return;
-
-        _currentRunDirectory = path;
+        _currentRunDirectory = null;
         InterventionText = string.Empty;
+        ResetAuthenticationState();
         _runCancellation = new CancellationTokenSource();
         if (Project.MaxMinutes > 0) _runCancellation.CancelAfter(TimeSpan.FromMinutes(Project.MaxMinutes));
         IsRunning = true;
         Project.Status = ProjectStatus.Crawling;
-        SetRunProgress("高速クロール", 10, "開始URLから同一Originのリンクを巡回しています。");
         RefreshSummary();
-        await _store.SaveAsync(Project);
-
+        await RecordProjectChangeAsync();
+        ExplorationProxySession? proxy = null;
+        int? aiPhaseStart = null;
+        var aiWasStarted = false;
+        var proxyDisconnected = false;
+        CancellationTokenSource? proxyMonitorCancellation = null;
+        Task? proxyMonitor = null;
         try
         {
             var progress = new Progress<string>(message => { Log(message); UpdateProgressFromLog(message); });
-            var crawl = await _fastCrawler.RunAsync(path, progress, _runCancellation.Token);
+            var path = await BuildPackageAsync();
+            if (path is null) { Project.Status = ProjectStatus.Failed; return; }
+            _currentRunDirectory = path;
+            proxy = await _explorationProxy.OpenAsync(Project, path, progress, _runCancellation.Token);
+            proxyMonitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(_runCancellation.Token);
+            proxyMonitor = proxy.MonitorAsync(() =>
+            {
+                proxyDisconnected = true;
+                Log("探索用プロキシへの接続が切れたため、探索を停止します。再実行時に接続先を確認してください。");
+                _runCancellation?.Cancel();
+            }, proxyMonitorCancellation.Token);
+            _runCancellation.Token.ThrowIfCancellationRequested();
+            SetRunProgress("高速クロール", 10, "開始URLから同一Originのリンクを巡回しています。");
+            var crawl = await _fastCrawler.RunAsync(path, progress, _runCancellation.Token, OnInterventionDetected, OnAuthenticationNavigationDetected);
             if (!crawl.Cancelled && !crawl.ProxyUnavailable && crawl.ExitCode != 0)
             {
                 Log($"高速クローラが終了コード {crawl.ExitCode} で停止しました。新しいプロセスで1回だけ再試行します。");
                 SetRunProgress("クロール再試行", Math.Max(15, RunProgress), "高速クローラを新しいプロセスで再開しています。");
-                crawl = await _fastCrawler.RunAsync(path, progress, _runCancellation.Token);
+                crawl = await _fastCrawler.RunAsync(path, progress, _runCancellation.Token, OnInterventionDetected, OnAuthenticationNavigationDetected);
             }
             if (crawl.Cancelled)
             {
-                Project.Status = ProjectStatus.Paused;
+                Project.Status = proxyDisconnected ? ProjectStatus.Failed : ProjectStatus.Paused;
                 SetRunProgress("停止", RunProgress, "高速クロールを停止しました。");
                 Log("高速クローラを停止しました。");
                 return;
@@ -803,15 +762,29 @@ public sealed class MainViewModel : ObservableObject
             if (crawl.ProxyUnavailable)
             {
                 Project.Status = ProjectStatus.Failed;
-                SetRunProgress("接続失敗", 0, "Burp Proxyへ接続できませんでした。");
-                Log("Burp Proxy (127.0.0.1:8080) に接続できないため探索を開始できませんでした。Burp Suiteを起動し、Proxy > Proxy settings の Listener が有効であることを確認してから再実行してください。");
+                SetRunProgress("接続失敗", 0, "探索用プロキシへ接続できませんでした。");
+                Log($"探索用プロキシ {proxy.Endpoint.Provider} ({proxy.Endpoint.Url}) への接続が切れました。通信記録を保存して停止します。再実行時に接続先を確認してください。");
                 RefreshSummary();
                 return;
             }
             if (crawl.ExitCode != 0)
                 Log($"高速クローラが再試行後も終了コード {crawl.ExitCode} で停止しました。取得済みデータを整理し、Codex探索へフォールバックします。");
             else
-                Log("高速GETクロールが完了しました。アプリ側でAI対象を分類します。");
+                Log(crawl.Status == "completed" ? "通常のリンク巡回が完了しました。AI対象を分類します。" : "リンク巡回は部分結果です。未到達・認証・上限の記録を確認してください。");
+            if (crawl.AuthenticationBlocked) { Project.Status = ProjectStatus.Partial; await RecoverPartialObservationsAsync(path); return; }
+            if (crawl.ExitCode != 0) { Project.Status = ProjectStatus.Failed; return; }
+            var setup = await _mcpSetup.ConfigureAsync(Project, proxy.Endpoint, path);
+            foreach (var message in setup.Messages) Log(message);
+            if (!setup.Success) throw new InvalidOperationException("MCP設定を準備できませんでした。実行履歴のmcp-setup.logを確認してください。");
+            proxy.UseBurpMcp = setup.UseBurpMcp;
+            await proxy.WriteRuntimeAsync();
+            await ExplorationPackageBuilder.ConfigureProxyPromptAsync(path, setup.UseBurpMcp);
+            if (proxy.ZapApi is not null)
+            {
+                try { aiPhaseStart = await proxy.ZapApi.MessageCountAsync(_runCancellation.Token); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { Log($"ZAP通信記録の区切りを取得できませんでした: {ex.Message}"); }
+                await CaptureZapHarAsync(proxy, Path.Combine(path, "zap-fast-capture.har"), 0, Project.ActiveRole, "har-reference");
+            }
             if (!crawl.ProxyUnavailable)
             {
                 SetRunProgress("AI入力整理", 58, "静的通信を除外し、動的な代表パターンを作成しています。");
@@ -827,16 +800,18 @@ public sealed class MainViewModel : ObservableObject
                         await ImportAsync(fastObservations);
                     else
                         Project.Status = ProjectStatus.Ready;
+                    if (crawl.Status != "completed") Project.Status = ProjectStatus.Partial;
                     SetRunProgress("完了", 100, "AI確認が必要な動的パターンはありませんでした。");
                     return;
                 }
                 Log(crawl.ExitCode == 0
-                    ? "動的な代表パターンだけをCodexへ渡して機能確認を開始します。"
+                    ? "代表パターンと、選択されていれば仕様書・操作手順をCodexへ渡して機能理解を開始します。"
                     : "高速クロールの部分データをCodexへ渡し、代表パターンの確認を継続します。");
                 SetRunProgress("Codex確認", 65, $"{aiInput.RequestPatternCount:N0}件の要求パターンと{aiInput.FormPatternCount:N0}件のフォームを確認しています。");
             }
 
-            var result = await _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation.Token);
+            aiWasStarted = true;
+            var result = await _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation.Token, OnAuthenticationNavigationDetected);
             if (!result.Cancelled && result.ExitCode == 0 && await IsTransportFailureAsync(result.ResultPath))
             {
                 Log("Playwright MCPの切断を検出しました。新しいMCPプロセスで探索を1回だけ自動再開します。");
@@ -844,11 +819,11 @@ public sealed class MainViewModel : ObservableObject
                 await File.AppendAllTextAsync(Path.Combine(path, "prompt.md"),
                     Environment.NewLine + "前回のPlaywright MCP接続が切断されたため、新しいMCPセッションでの再開です。ai-input.jsonと既存のexploration-summary.jsonを読み、未確認の代表パターンから続行し、最終結果ファイルを置き換えてください。" + Environment.NewLine,
                     _runCancellation.Token);
-                result = await _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation.Token);
+                result = await _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation.Token, OnAuthenticationNavigationDetected);
             }
             if (result.Cancelled)
             {
-                Project.Status = ProjectStatus.Paused;
+                Project.Status = proxyDisconnected ? ProjectStatus.Failed : ProjectStatus.Paused;
                 Log("探索を停止しました。");
             }
             else if (result.HumanInterventionPending)
@@ -879,14 +854,14 @@ public sealed class MainViewModel : ObservableObject
                     foreach (var observationFile in observationFiles)
                         importedEvidenceCount += await ImportAsync(observationFile);
                 }
-                var partialResult = result.ExitCode != 0 ||
+                var partialResult = crawl.Status != "completed" || string.IsNullOrWhiteSpace(finalStatus) || result.ExitCode != 0 ||
                     string.Equals(finalStatus, "failed", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(finalStatus, "partial", StringComparison.OrdinalIgnoreCase);
                 if (partialResult && (importedEvidenceCount > 0 ||
                     string.Equals(finalStatus, "partial", StringComparison.OrdinalIgnoreCase)))
                 {
                     Project.Status = ProjectStatus.Partial;
-                    Log("取得済みの結果を部分結果として確認できます。Burp履歴の未取得など、探索結果の制約を確認してください。");
+                    Log("取得済みの結果を部分結果として確認できます。通信記録の未取得など、探索結果の制約を確認してください。");
                 }
                 else if (partialResult)
                 {
@@ -900,6 +875,12 @@ public sealed class MainViewModel : ObservableObject
                 }
             }
         }
+        catch (OperationCanceledException)
+        {
+            Project.Status = proxyDisconnected ? ProjectStatus.Failed : ProjectStatus.Paused;
+            if (_currentRunDirectory is not null) await RecoverPartialObservationsAsync(_currentRunDirectory);
+            Log("探索を停止しました。取得済みの記録を保存します。");
+        }
         catch (Exception ex)
         {
             var recovered = _currentRunDirectory is null ? 0 : await RecoverPartialObservationsAsync(_currentRunDirectory);
@@ -910,12 +891,52 @@ public sealed class MainViewModel : ObservableObject
         }
         finally
         {
+            try { await _fastCrawler.CloseAsync(); }
+            catch (Exception ex) { Log($"探索ブラウザの終了に失敗しました: {ex.Message}"); Project.Status = ProjectStatus.Partial; }
+            if (proxyMonitorCancellation is not null)
+            {
+                proxyMonitorCancellation.Cancel();
+                if (proxyMonitor is not null) await proxyMonitor;
+                proxyMonitorCancellation.Dispose();
+            }
+            if (proxy is not null)
+            {
+                try
+                {
+                    if (_currentRunDirectory is not null)
+                    {
+                        if (!aiWasStarted) await CaptureZapHarAsync(proxy, Path.Combine(_currentRunDirectory, "zap-fast-capture.har"), 0, "混在（通信ごとに記録）", "har-reference");
+                        else if (aiPhaseStart is int start) await CaptureZapHarAsync(proxy, Path.Combine(_currentRunDirectory, "zap-ai-capture.har"), start, Project.ActiveRole);
+                    }
+                }
+                finally
+                {
+                    try { await proxy.DisposeAsync(); }
+                    catch (Exception ex) { Log($"探索用プロキシの終了処理に失敗しました: {ex.Message}"); }
+                }
+            }
             IsRunning = false;
             _runCancellation?.Dispose();
             _runCancellation = null;
             ResumeExplorationCommand.RaiseCanExecuteChanged();
             RefreshSummary();
-            await _store.SaveAsync(Project);
+            if (_currentRunDirectory is not null && File.Exists(Path.Combine(_currentRunDirectory, "fast-capture.har")))
+            {
+                var captured = await ProjectPaths.EvidenceAsync(Project, Path.Combine(_currentRunDirectory, "fast-capture.har"), "har");
+                if (!Project.Inputs.Any(x => x.LocalPath == captured.LocalPath)) Project.Inputs.Add(captured with { Role = "混在（通信ごとに記録）" });
+            }
+            if (_currentRunDirectory is not null)
+            {
+                try
+                {
+                    await new RunObservationCollector().CollectAsync(_currentRunDirectory, Project.AllowedOrigins, Project.ActiveRole);
+                    var status = Project.Status;
+                    await RecoverPartialObservationsAsync(_currentRunDirectory);
+                    if (status is ProjectStatus.Partial or ProjectStatus.Failed or ProjectStatus.Paused or ProjectStatus.WaitingForHuman) Project.Status = status;
+                }
+                catch (Exception ex) { Log($"通信記録の集約に失敗しました: {ex.Message}"); Project.Status = ProjectStatus.Partial; }
+            }
+            await RecordProjectChangeAsync();
             if (Project.Status is ProjectStatus.Ready or ProjectStatus.ReviewReady or ProjectStatus.Partial)
                 SetRunProgress("完了", 100, Project.Status == ProjectStatus.Partial ? "部分結果を保存しました。制約を確認してください。" : "探索結果を保存しました。");
             else if (Project.Status == ProjectStatus.WaitingForHuman)
@@ -928,19 +949,20 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task<string?> BuildPackageAsync()
     {
+        if (!await TryEnsureProjectAsync()) return null;
         if (!Uri.TryCreate(Project.StartUrl, UriKind.Absolute, out var start) || start.Scheme is not ("http" or "https"))
         { Log("開始URLをhttpまたはhttpsの完全なURLで入力してください。"); return null; }
         if (string.IsNullOrWhiteSpace(Project.AllowedOrigins))
         { Log("診断を許可されたOriginを1件以上入力してください。"); return null; }
         if (RemoveStartUrlFromDeferredCache())
             Log("開始URLの除外キャッシュを解除し、AI確認対象へ戻しました。");
-        await SaveAsync();
+        await RecordProjectChangeAsync();
         return await _packageBuilder.BuildAsync(Project);
     }
 
     private void StopExploration()
     {
-        Log("探索の停止を要求しました。");
+        Log("処理の停止を要求しました。");
         SetRunProgress("停止要求", RunProgress, "現在の処理を安全に停止しています。");
         _runCancellation?.Cancel();
         _fastCrawler.Stop();
@@ -951,20 +973,35 @@ public sealed class MainViewModel : ObservableObject
     private void ResumeExploration()
     {
         if (_currentRunDirectory is null) return;
-        CodexExplorationRunner.Resume(_currentRunDirectory);
+        try { CodexExplorationRunner.Resume(_currentRunDirectory, AuthenticationWaiting ? AuthenticationRole : null); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        { ShowProjectError?.Invoke(ex.Message); Log($"再開できませんでした: {ex.Message}"); return; }
+        if (AuthenticationWaiting)
+        {
+            Project.ActiveRole = AuthenticationRole;
+            if (!RoleOptions.Contains(AuthenticationRole))
+            {
+                Project.Roles += Environment.NewLine + AuthenticationRole;
+                UpdateRoleOptions();
+            }
+            AuthenticationStatusText = "ユーザーの入力完了を受け付けました。ログイン状態と到達先を確認しています。";
+        }
         Project.Status = ProjectStatus.Crawling;
         SetRunProgress("探索再開", Math.Max(65, RunProgress), $"{Project.ActiveRole}として同じブラウザセッションで探索を再開しています。");
         InterventionText = string.Empty;
+        AuthenticationWaiting = false;
+        RaisePropertyChanged(nameof(ResumeActionText));
         ResumeExplorationCommand.RaiseCanExecuteChanged();
         RefreshSummary();
-        Log("手動操作の完了をCodexへ通知しました。探索を再開します。");
+        Log("手動操作の完了を探索ブラウザへ通知しました。到達先を確認して巡回を再開します。");
     }
 
-    private void OnInterventionDetected(string detail)
+    internal void OnInterventionDetected(string detail)
     {
         Project.Status = ProjectStatus.WaitingForHuman;
         SetRunProgress("手動操作待ち", Math.Max(65, RunProgress), "ブラウザで必要な操作を完了してください。");
         InterventionText = FormatIntervention(detail);
+        PrepareAuthenticationIntervention(detail);
         ResumeExplorationCommand.RaiseCanExecuteChanged();
         RefreshSummary();
     }
@@ -1064,6 +1101,8 @@ public sealed class MainViewModel : ObservableObject
             try { ApiDocumentService.Validate(Project); return true; }
             catch (InvalidDataException) { return false; }
         }
+        try { AuthenticationFlow.ValidateTarget(Project); }
+        catch (InvalidDataException) { return false; }
         return Uri.TryCreate(Project.StartUrl, UriKind.Absolute, out var start) && start.Scheme is "http" or "https" &&
             !string.IsNullOrWhiteSpace(Project.AllowedOrigins);
     }
@@ -1097,12 +1136,14 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task ExportBurpScopeAsync()
     {
+        if (!await TryEnsureProjectAsync()) return;
+        if (IsZapTarget) { await ExportZapAsync(); return; }
         if (IsApiMode)
         {
             try
             {
                 var export = await _apiExport.ExportAsync(Project);
-                await _store.SaveAsync(Project);
+                await RecordProjectChangeAsync();
                 BurpScopeRegexes.Clear();
                 CopyNextBurpRegexCommand.RaiseCanExecuteChanged();
                 LastBurpExportDirectory = export.Directory;
@@ -1116,7 +1157,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var result = await _burpScopeExport.ExportAsync(Project);
-            await _store.SaveAsync(Project);
+            await RecordProjectChangeAsync();
             BurpScopeRegexes.Clear();
             foreach (var regex in result.CombinedRegexes) BurpScopeRegexes.Add(regex);
             LastBurpExportDirectory = result.Directory;
@@ -1155,23 +1196,31 @@ public sealed class MainViewModel : ObservableObject
     {
         SelectedApiRequest = null;
         BurpScopeRegexes.Clear();
-        LastBurpExportDirectory = _dataManagement.FindLatestBurpExportDirectory(Project.Id, Project.Mode);
+        LastBurpExportDirectory = IsZapTarget ? _dataManagement.FindLatestZapDirectory(Project)
+            : _dataManagement.FindLatestBurpExportDirectory(Project, Project.Mode);
         SelectedBurpScopeRegex = null;
         _nextBurpRegexIndex = 0;
-        BurpHandoffStatus = IsApiMode ? "APIリクエスト画面で下書きを確認・採用してから［HTTPリクエストを出力］を押してください。" : "Burp Scope出力を生成すると、登録用の正規表現をここで案内します。";
+        BurpHandoffStatus = IsZapTarget ? "採用対象を確認してZAPパッケージを出力してください。診断開始には選択中のロールのHARが必要です。"
+            : IsApiMode ? "APIリクエスト画面で下書きを確認・採用してから［HTTPリクエストを出力］を押してください。" : "Burp Scope出力を生成すると、登録用の正規表現をここで案内します。";
         CopyNextBurpRegexCommand.RaiseCanExecuteChanged();
     }
 
     private async Task ExportFindingsAsync()
     {
+        if (!await TryEnsureProjectAsync()) return;
         try
         {
             var result = await _findingReport.ExportAsync(Project);
             Log($"案件レポートを出力しました: 採用候補{result.CandidateCount:N0}件、所見{result.FindingCount:N0}件 / {result.Directory}");
+            Log($"日本語Markdown: {result.MarkdownPath} / ツール警告{result.AlertGroupCount}種類・ロール別");
+            RememberMarkdownReport(result.MarkdownPath);
+            if (result.UntranslatedGroupCount > 0) Log($"日本語解説が未登録の警告: {result.UntranslatedGroupCount}件。検証済み原文を掲載しています。");
+            if (result.UnavailableEvidenceCount > 0) Log($"原本詳細を掲載できない発生記録: {result.UnavailableEvidenceCount}件。Markdownの出典検証欄を確認してください。");
             Log($"JSON: {result.JsonPath}");
             Log($"HTML: {result.HtmlPath}");
             Log($"候補作業表: {result.CandidateChecklistPath}");
             await RefreshDataSummaryAsync();
+            OpenRunPath(result.Directory, "レポート出力フォルダー");
         }
         catch (Exception ex) { Log($"案件レポートの出力に失敗しました: {ex.Message}"); }
     }

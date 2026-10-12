@@ -121,11 +121,15 @@ public sealed class AiInputBuilder
 
         var keptRequests = requestGroups.Take(MaxRequestPatterns).ToArray();
         var keptForms = formGroups.Take(MaxFormPatterns).ToArray();
+        var authenticationPages = await ReadAuthenticationPagesAsync(Path.Combine(runDirectory, "crawl-pages.jsonl"));
         var truncated = Math.Max(0, requestGroups.Length - keptRequests.Length) + Math.Max(0, formGroups.Length - keptForms.Length);
+        var hasReferenceDocument = File.Exists(Path.Combine(runDirectory, ExplorationDocumentService.RunFileName));
         var output = new
         {
             generatedAt = DateTimeOffset.Now,
             targetRole = activeRole,
+            authenticationPages,
+            referenceDocumentFile = hasReferenceDocument ? ExplorationDocumentService.RunFileName : null,
             policy = new
             {
                 description = "前回採用済みと新規発見パターンを収録し、除外キャッシュを省いています。観測可能な選定規則による一次分類であり、除外は安全性の証明ではありません。",
@@ -152,7 +156,7 @@ public sealed class AiInputBuilder
         var outputPath = Path.Combine(runDirectory, "ai-input.json");
         await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true }));
         return new AiInputBuildResult(
-            keptRequests.Length + keptForms.Length > 0 || !IsUnauthenticatedRole(activeRole),
+            keptRequests.Length + keptForms.Length > 0 || !IsUnauthenticatedRole(activeRole) || hasReferenceDocument || authenticationPages.Length > 0,
             requests.Count,
             staticExcluded,
             deferredExcluded,
@@ -174,6 +178,38 @@ public sealed class AiInputBuilder
         "検索・入力" or "入力パラメーター" => 4,
         _ => 1
     };
+
+    private static async Task<object[]> ReadAuthenticationPagesAsync(string path)
+    {
+        if (!File.Exists(path)) return [];
+        var pages = new List<object>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in await File.ReadAllLinesAsync(path))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                var url = root.GetProperty("url").GetString() ?? "";
+                var title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+                var password = false;
+                var user = false;
+                var unauthorized = root.TryGetProperty("statusCode", out var status) && status.TryGetInt32(out var code) && code == 401;
+                if (root.TryGetProperty("forms", out var forms))
+                    foreach (var form in forms.EnumerateArray())
+                    {
+                        password |= form.TryGetProperty("hasPasswordField", out var p) && p.ValueKind == JsonValueKind.True;
+                        user |= form.TryGetProperty("hasUserField", out var u) && u.ValueKind == JsonValueKind.True;
+                    }
+                if ((!unauthorized && !AuthenticationFlow.LooksLikeLogin(url, title, password, user)) || !seen.Add(url)) continue;
+                pages.Add(new { url, title, hasPasswordField = password, hasUserField = user,
+                    reason = "認証画面の可能性があります。実際の画面を確認し、認証情報の入力をユーザーへ依頼してください。" });
+                if (pages.Count == 20) break;
+            }
+            catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException) { }
+        }
+        return pages.ToArray();
+    }
 
     private static async Task<IReadOnlyList<FormPattern>> ReadFormsAsync(string path)
     {

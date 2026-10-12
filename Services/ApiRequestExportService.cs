@@ -8,8 +8,8 @@ public sealed record ApiRequestExportResult(string Directory, int RequestCount);
 
 public sealed class ApiRequestExportService
 {
-    private readonly string _exportsDirectory;
-    public ApiRequestExportService(string? exportsDirectory = null) => _exportsDirectory = exportsDirectory ?? Path.Combine(ScopePilotDataPaths.RootDirectory, "exports");
+    private readonly string? _exportsDirectory;
+    public ApiRequestExportService(string? exportsDirectory = null) => _exportsDirectory = exportsDirectory;
 
     public async Task<ApiRequestExportResult> ExportAsync(EngagementProject project)
     {
@@ -21,7 +21,7 @@ public sealed class ApiRequestExportService
             ApiRequestFormatter.EnsureAllowed(draft.Url, project.AllowedOrigins);
             return ApiRequestFormatter.Format(draft);
         }).ToArray();
-        var directory = Path.Combine(_exportsDirectory, project.Id.ToString("N"), $"api-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}");
+        var directory = Path.Combine(_exportsDirectory is null ? ProjectPaths.Category(project, "exports") : Path.Combine(_exportsDirectory, project.Id.ToString("N")), $"api-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}");
         var requestsDirectory = Path.Combine(directory, "requests");
         System.IO.Directory.CreateDirectory(requestsDirectory);
         for (var i = 0; i < selected.Length; i++)
@@ -29,7 +29,7 @@ public sealed class ApiRequestExportService
         await File.WriteAllTextAsync(Path.Combine(directory, "api-requests.json"), JsonSerializer.Serialize(new
         {
             generatedAt = DateTimeOffset.Now, projectId = project.Id, projectName = project.Name,
-            requests = selected.Select((draft, i) => new { file = $"requests/{i + 1:D4}.http", request = draft })
+            requests = selected.Select((draft, i) => new { file = $"requests/{i + 1:D4}.http", request = ProjectPaths.PortableRunObject(project, draft) })
         }, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
         static string Clean(string? value) => (value ?? string.Empty).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
         await File.WriteAllLinesAsync(Path.Combine(directory, "api-request-checklist.tsv"),

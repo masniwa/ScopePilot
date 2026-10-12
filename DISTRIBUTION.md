@@ -1,4 +1,4 @@
-# ScopePilot 0.11.2 配布版
+# ScopePilot 0.12.0 配布版
 
 ScopePilot本体はBSD-3-Clauseライセンスです。配布物に含まれる `LICENSE` に再配布条件と免責事項を記載しています。第三者コンポーネントのライセンスは `THIRD-PARTY-NOTICES.md` と各コンポーネントのLICENSE／NOTICEを参照してください。
 
@@ -10,7 +10,7 @@ ARM64版のアプリ本体と.NETランタイムはARM64ネイティブです。
 
 ## インストーラー（推奨）
 
-1. PCに合う `ScopePilot-0.11.2-win-arm64-Setup.exe` または `ScopePilot-0.11.2-win-x64-Setup.exe` を実行します。利用者ごとの導入で管理者権限は不要です。
+1. PCに合う `ScopePilot-0.12.0-win-arm64-Setup.exe` または `ScopePilot-0.12.0-win-x64-Setup.exe` を実行します。利用者ごとの導入で管理者権限は不要です。
 2. セットアップの説明を読み、必要ならデスクトップのショートカットを選択してインストールします。
 3. `%LOCALAPPDATA%\Programs\ScopePilot` に導入され、スタートメニューに登録されます。
 4. 完了画面から「初回セットアップガイド」を開き、外部ソフトとMCPの接続を設定します。
@@ -21,11 +21,11 @@ Node.js、Microsoft Edge、Codex CLI、Burp本体とBurp MCP拡張は別途準�
 
 ### 更新・ポータブル版からの移行
 
-探索を終了し案件を保存してアプリを閉じ、新版のSetup.exeを実行します。既存のインストール先と案件を引き継ぎます。ポータブル版から初めて導入した場合は「MCP接続を設定」を実行してください。0.11.2は古い配置先の登録を検出して更新します。異なる配置先のアプリを同時に利用しないでください。
+探索を終了し案件を保存してアプリを閉じ、新版のSetup.exeを実行します。既存のインストール先と案件を引き継ぎます。ポータブル版から初めて導入した場合は「MCP接続を設定」を実行してください。0.12.0は古い配置先の登録を検出して更新します。異なる配置先のアプリを同時に利用しないでください。
 
 ### アンインストール
 
-Windowsの「設定」→「アプリ」からScopePilotを削除します。案件・実行履歴（`%LOCALAPPDATA%\ScopePilot`）、Codexの設定・認証、外部ソフトは保持します。アンインストール後に不要となったMCP登録の削除は、他の作業への影響を確認したうえで利用者が行ってください。
+Windowsの「設定」→「アプリ」からScopePilotを削除します。利用者が選択したプロジェクトフォルダー内の案件・実行履歴、Codexの設定・認証、外部ソフトは保持します。アンインストール後に不要となったMCP登録の削除は、他の作業への影響を確認したうえで利用者が行ってください。
 
 ## ポータブルZIPの初回起動
 
@@ -35,7 +35,7 @@ Windowsの「設定」→「アプリ」からScopePilotを削除します。案
 4. `ScopePilot.exe` を起動し、「環境チェック」と「MCP接続を設定」を実行します。
 5. Codexを再起動してから探索を開始します。
 
-Playwright MCPランタイムは配布物へ同梱されます。Burp MCP用stdioプロキシは、Burp MCP拡張の抽出機能から別途取得して `%LOCALAPPDATA%\ScopePilot\mcp\mcp-proxy-all.jar` へ配置してください。別の場所を使う場合は、環境変数 `SCOPEPILOT_BURP_PROXY_JAR` に完全なパスを指定します。案件データは `%LOCALAPPDATA%\ScopePilot` に保存されます。
+Playwright MCPランタイムは配布物へ同梱されます。Burp MCP用stdioプロキシは、Burp MCP拡張の抽出機能から別途取得して `%LOCALAPPDATA%\ScopePilot\mcp\mcp-proxy-all.jar` へ配置してください。別の場所を使う場合は、環境変数 `SCOPEPILOT_BURP_PROXY_JAR` に完全なパスを指定します。案件データは利用者が選択したプロジェクトフォルダーに保存します。起動時にプロジェクトフォルダーを開くか、新しいフォルダーと `.scopepilot.json` を作成してください。入力・編集内容は各画面の［保存］で手動保存します。旧案件は［旧案件を移行］からコピーできます。
 
 ## 配布物の検証
 
@@ -52,8 +52,13 @@ Playwright依存関係を `npm ci` で復元し、.NET 10 SDKとInno Setup 6.7.3
 ./scripts/Build-Installer.ps1 -Runtime win-arm64 -IsccPath 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
 
-バージョンはcsprojから取得します。テスト、自己完結型publish、ZIP生成、Setup.exe生成、SHA-256生成を順に実行します。`-SkipPublish` は既に生成した同じ版・CPUの配布フォルダーを再利用し、`-SkipTests` は検証済みのCI工程に限って使用します。GitHub Actionsは両CPU向けにZIPとSetup.exeを成果物に含めます。ARM64・x64は同じ案件保存先とインストール先を使用し、同時に別のインストールとして登録しません。
+バージョンはcsprojから取得します。テスト、自己完結型publish、ZIP生成、Setup.exe生成、SHA-256生成を順に実行します。`-SkipPublish` は既に生成した同じ版・CPUの配布フォルダーを再利用し、`-SkipTests` は検証済みのCI工程に限って使用します。GitHub Actionsは両CPU向けにZIPとSetup.exeを成果物に含めます。ARM64・x64は同じプロジェクト形式とインストール先を使用し、同時に別のインストールとして登録しません。
 
 非対話導入は `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS`、非対話削除はインストール先の `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` を使用します。事前にアプリを終了してください。自動ログは一時フォルダーへ出力され、`/LOG="絶対パス"` でも指定できます。
 
 インストーラー生成には [Inno Setup](https://jrsoftware.org/) を使用しています。
+
+
+## ZAP連携
+
+ZAP本体と対応Javaは別途導入し、アプリの［診断ツールへ］でJARとjava.exeを指定します。自動制御は保存済みHARのパッシブ診断です。[手順と保存方式](docs/PROJECTS-AND-HANDOFF.md)を参照してください。

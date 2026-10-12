@@ -19,6 +19,8 @@ public sealed record ExplorationRunSummary(
     public string StartedAtDisplay => StartedAt.ToLocalTime().ToString("yyyy/MM/dd HH:mm:ss");
     public string PatternCountDisplay => $"{RequestPatternCount:N0} / {FormPatternCount:N0}";
     public string Role { get; init; } = "未認証";
+    public string Tool { get; init; } = "ScopePilot";
+    public string ProxyDisplay { get; init; } = "記録なし";
     public InputMode Mode { get; init; } = InputMode.WebExploration;
     public int NewPatternCount { get; init; }
     public int ChangedPatternCount { get; init; }
@@ -35,20 +37,23 @@ public sealed record RunDiffEntry(string ChangeType, string Method, string Patte
 
 public sealed class RunHistoryService
 {
-    private readonly string _runsDirectory;
+    private readonly string? _runsDirectory;
 
     public RunHistoryService(string? runsDirectory = null)
     {
-        _runsDirectory = runsDirectory ?? Path.Combine(ScopePilotDataPaths.RootDirectory, "runs");
+        _runsDirectory = runsDirectory;
     }
 
-    public async Task<IReadOnlyList<ExplorationRunSummary>> ListAsync(Guid projectId)
+    public Task<IReadOnlyList<ExplorationRunSummary>> ListAsync(EngagementProject project) => string.IsNullOrWhiteSpace(project.ProjectFilePath) ? Task.FromResult<IReadOnlyList<ExplorationRunSummary>>([]) : ListDirectoryAsync(ProjectPaths.Category(project, "runs"));
+    public Task<IReadOnlyList<ExplorationRunSummary>> ListAsync(Guid projectId) => ListDirectoryAsync(Path.Combine(_runsDirectory ?? throw new InvalidOperationException("プロジェクトファイルが必要です。"), projectId.ToString("N")));
+    private async Task<IReadOnlyList<ExplorationRunSummary>> ListDirectoryAsync(string projectDirectory)
     {
-        var projectDirectory = Path.Combine(_runsDirectory, projectId.ToString("N"));
+
         if (!Directory.Exists(projectDirectory)) return [];
         var results = new List<ExplorationRunSummary>();
         foreach (var directory in new DirectoryInfo(projectDirectory).GetDirectories().OrderByDescending(x => x.LastWriteTimeUtc))
         {
+            ProjectPaths.EnsureChild(projectDirectory, directory.FullName);
             try { results.Add(await ReadAsync(directory)); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
@@ -58,8 +63,8 @@ public sealed class RunHistoryService
         }
         for (var index = 0; index < results.Count; index++)
         {
-            if (results[index].Mode == InputMode.ApiDocument) continue;
-            var previous = results.Skip(index + 1).FirstOrDefault(x => x.Mode == InputMode.WebExploration);
+            if (results[index].Mode == InputMode.ApiDocument || results[index].Tool != "ScopePilot") continue;
+            var previous = results.Skip(index + 1).FirstOrDefault(x => x.Mode == InputMode.WebExploration && x.Tool == "ScopePilot");
             if (previous is not null) results[index] = await AddDiffAsync(results[index], previous);
         }
         return results;
@@ -104,6 +109,15 @@ public sealed class RunHistoryService
     private static async Task<ExplorationRunSummary> ReadAsync(DirectoryInfo directory)
     {
         var engagement = await ReadJsonAsync(Path.Combine(directory.FullName, "engagement.json"));
+        if (ReadString(engagement, "mode") is "zap-passive" or "zap-active" or "zap-browser" or "zap-addons")
+        {
+            var zap = await ReadJsonAsync(Path.Combine(directory.FullName, "zap-summary.json"));
+            var state = ReadString(zap, "status");
+            return new(directory.Name, directory.FullName, ReadDate(engagement, "runStartedAt") ?? directory.CreationTime,
+                state, $"ZAP: {state}", 0, 0, ReadInt(zap, "messageCount"), 0,
+                ReadString(engagement, "mode") switch { "zap-browser" => "Playwrightの手動操作記録", "zap-addons" => "必要add-onの準備", "zap-active" => "承認済みURLのアクティブ診断", _ => "保存済みHARのパッシブ診断" }, "主体・実影響は未確認です。")
+            { Tool = "ZAP", Role = ReadString(engagement, "activeRole"), DiffSummary = "ZAP診断は探索差分に含めません。" };
+        }
         if (ReadString(engagement, "mode") == "api-document")
         {
             var api = await ReadJsonAsync(Path.Combine(directory.FullName, "api-document-summary.json"));
@@ -116,6 +130,7 @@ public sealed class RunHistoryService
             { Mode = InputMode.ApiDocument, Role = ReadString(engagement, "activeRole"), DiffSummary = "API文書の生成実行です。通信は未送信です。" };
         }
         var fast = await ReadJsonAsync(Path.Combine(directory.FullName, "fast-crawl-summary.json"));
+        var proxy = await ReadJsonAsync(Path.Combine(directory.FullName, "exploration-proxy.json"));
         var aiInput = await ReadJsonAsync(Path.Combine(directory.FullName, "ai-input.json"));
         var result = await ReadJsonAsync(Path.Combine(directory.FullName, "codex-result.json"));
         var recovery = await ReadJsonAsync(Path.Combine(directory.FullName, "scopepilot-recovery.json"));
@@ -128,12 +143,13 @@ public sealed class RunHistoryService
         var status = ReadString(result, "status");
         var summary = ReadString(result, "summary");
         var limitations = ReadStringArray(result, "limitations");
+        if (status == "completed" && ReadString(fast, "status") is "partial" or "failed") status = "partial";
         if (string.IsNullOrWhiteSpace(status))
         {
             if (intervention) status = "waiting";
             else if (recovery is not null) status = ReadInt(recovery, "recoveredObservationCount") > 0 ? "partial" : "failed";
             else if (File.Exists(Path.Combine(directory.FullName, "codex-run.log"))) status = "failed";
-            else if (fast is not null) status = ReadString(fast, "status") is "completed" ? "crawled" : "failed";
+            else if (fast is not null) status = ReadString(fast, "status") is "completed" ? "crawled" : ReadString(fast, "status") is "partial" ? "partial" : "failed";
             else status = "prepared";
         }
         if (string.IsNullOrWhiteSpace(summary)) summary = status switch
@@ -141,6 +157,7 @@ public sealed class RunHistoryService
             "prepared" => "探索パッケージを生成済みです。",
             "crawled" => "高速クロールまで完了しています。",
             "waiting" => "手動操作の完了を待っています。",
+            "partial" => "リンク巡回の部分結果です。到達状況と制約を確認してください。",
             "failed" => "結果ファイルが生成されず終了しました。ログを確認してください。",
             _ => string.Empty
         };
@@ -148,7 +165,10 @@ public sealed class RunHistoryService
             summary = $"{ReadString(recovery, "phase")}で技術エラー: {ReadString(recovery, "error")}";
         return new(directory.Name, directory.FullName, startedAt, status, StatusDisplay(status), fastRequestCount,
             aiObservedCount, requestPatterns, formPatterns, summary, limitations)
-        { Role = ReadString(engagement, "activeRole") is { Length: > 0 } role ? role : "未認証" };
+        {
+            Role = ReadString(engagement, "activeRole") is { Length: > 0 } role ? role : "未認証",
+            ProxyDisplay = proxy is null ? "記録なし" : $"{(ReadString(proxy, "provider") == "Zap" ? "ZAP" : ReadString(proxy, "provider"))} / {ReadString(proxy, "url")}"
+        };
     }
 
     private static string StatusDisplay(string status) => status.ToLowerInvariant() switch

@@ -13,6 +13,8 @@ ScopePilot's BSD-3-Clause license does not relicense those components.
 | Playwright MCP | Apache-2.0 | https://github.com/microsoft/playwright-mcp | `tools/playwright-runtime/node_modules/@playwright/mcp/LICENSE` |
 | Playwright | Apache-2.0 | https://github.com/microsoft/playwright | `tools/playwright-runtime/node_modules/playwright/LICENSE`, `NOTICE` and `ThirdPartyNotices.txt` |
 | Playwright Core | Apache-2.0 | https://github.com/microsoft/playwright | `tools/playwright-runtime/node_modules/playwright-core/LICENSE`, `NOTICE` and `ThirdPartyNotices.txt` |
+| Markdig 1.4.0 | BSD-2-Clause | https://github.com/xoofx/markdig | `licenses/word/Markdig-1.4.0.txt` |
+| Open XML SDK and Framework 3.5.1 | MIT | https://github.com/dotnet/Open-XML-SDK | `licenses/word/OpenXML-SDK-3.5.1.txt` |
 | .NET / Windows Desktop runtime (self-contained distributions) | MIT and component-specific licenses | https://github.com/dotnet/runtime and https://github.com/dotnet/wpf | `licenses/dotnet/<runtime-package>/<version>/`: original `LICENSE` / `LICENSE.TXT` and `THIRD-PARTY-NOTICES.TXT` from the exact resolved runtime packages |
 
 Keep the original license and notice files with the redistributed components.

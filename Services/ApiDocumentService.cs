@@ -8,17 +8,13 @@ public sealed record ApiDocumentResult(string Status, string Summary, string[] L
 
 public sealed class ApiDocumentService
 {
-    public const int MaxDocumentCharacters = 250_000;
-    private readonly string _runsDirectory;
-    public ApiDocumentService(string? runsDirectory = null) => _runsDirectory = runsDirectory ?? Path.Combine(ScopePilotDataPaths.RootDirectory, "runs");
+    public const int MaxDocumentCharacters = TextDocumentReader.MaxCharacters;
+    private readonly string? _runsDirectory;
+    public ApiDocumentService(string? runsDirectory = null) => _runsDirectory = runsDirectory;
 
     public static async Task<ApiDocumentSettings> ReadDocumentAsync(string path, ApiDocumentSettings current)
     {
-        if (new FileInfo(path).Length > MaxDocumentCharacters * 4L)
-            throw new InvalidDataException("ドキュメントが大きすぎます。必要なAPI定義を分割して読み込んでください。");
-        var content = await File.ReadAllTextAsync(path, new UTF8Encoding(false, true));
-        if (string.IsNullOrWhiteSpace(content) || content.Contains('\0') || content.Length > MaxDocumentCharacters)
-            throw new InvalidDataException($"UTF-8のテキスト文書（最大{MaxDocumentCharacters:N0}文字）を選択してください。");
+        var content = await TextDocumentReader.ReadAsync(path);
         return new() { FileName = Path.GetFileName(path), Content = content, BaseUrl = current.BaseUrl, Provider = current.Provider };
     }
 
@@ -37,7 +33,7 @@ public sealed class ApiDocumentService
     public async Task<string> BuildAsync(EngagementProject project)
     {
         Validate(project);
-        var directory = Path.Combine(_runsDirectory, project.Id.ToString("N"), $"api-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}");
+        var directory = Path.Combine(_runsDirectory is null ? ProjectPaths.Category(project, "runs") : Path.Combine(_runsDirectory, project.Id.ToString("N")), $"api-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         await File.WriteAllTextAsync(Path.Combine(directory, "engagement.json"), JsonSerializer.Serialize(new
         {

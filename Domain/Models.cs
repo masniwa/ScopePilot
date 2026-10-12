@@ -18,12 +18,21 @@ public enum ProjectStatus
 
 public sealed class EngagementProject
 {
+    [System.Text.Json.Serialization.JsonIgnore] public string ProjectFilePath { get; set; } = "";
+    public int FormatVersion { get; set; } = 1;
+    public DiagnosticToolSettings DiagnosticTools { get; set; } = new();
+    public ObservableCollection<EvidenceReference> Inputs { get; set; } = [];
+    public ObservableCollection<DiagnosticObservation> DiagnosticObservations { get; set; } = [];
+    public ObservableCollection<BrunoVerification> BrunoVerifications { get; set; } = [];
     public InputMode Mode { get; set; } = InputMode.WebExploration;
+    public ExplorationDocumentSettings ExplorationDocument { get; set; } = new();
+    public ExplorationProxySettings ExplorationProxy { get; set; } = new();
     public ApiDocumentSettings ApiDocument { get; set; } = new();
     public ObservableCollection<ApiRequestDraft> ApiRequests { get; set; } = [];
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "新規案件";
     public string StartUrl { get; set; } = string.Empty;
+    public string AfterAuthenticationUrl { get; set; } = string.Empty;
     public string AllowedOrigins { get; set; } = string.Empty;
     public string SupportingOrigins { get; set; } = string.Empty;
     public string Roles { get; set; } = "未認証\n一般ユーザー";
@@ -32,6 +41,7 @@ public sealed class EngagementProject
     public int MaxPages { get; set; } = 500;
     public int MaxMinutes { get; set; } = 30;
     public int MaxRequests { get; set; } = 5000;
+    public bool EnableFormSubmissions { get; set; }
     public GuidelineSelectionOptions Guidelines { get; set; } = new();
     public ProjectStatus Status { get; set; } = ProjectStatus.Draft;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
