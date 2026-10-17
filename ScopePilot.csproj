@@ -22,6 +22,7 @@
   <ItemGroup>
     <Compile Remove="Tests\**\*.cs" />
     <None Include="Tests\**\*" Exclude="Tests\**\bin\**;Tests\**\obj\**" />
+    <Compile Remove="scripts\**\*.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="tools\playwright-runtime\**\*">
@@ -51,7 +52,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="tools\fast-crawl.js;tools\crawl-policy.js;tools\zap-browser-record.js">
+    <Content Include="tools\fast-crawl.js;tools\crawl-policy.js;tools\zap-browser-record.js;tools\mcp-tool-filter.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
