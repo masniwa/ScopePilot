@@ -122,7 +122,7 @@ F15 の要求解釈差・キャッシュ・並行実行、F16 の DOM 計測、F
 
 ### 3.1 自動診断に向けた方針の切り替え
 
-本改訂で、ScopePilot の目的を診断の自動実行に定めた。これに伴い、現行の方針文書（`AGENTS.md`、`PROJECTS-AND-HANDOFF.md`、`detection-improvement-policy.md`、`ZAP-RESEND-WORKBENCH-PROPOSAL.md`）が置いていた「観測後のみ」「手動1件ずつ」「能動診断の既定無効」等の制約は、自動実行として最適な設計へ置き換える。実装着手時に、該当する方針文書を本仕様と整合するよう更新する。
+本改訂で、ScopePilot の目的を診断の自動実行に定めた。これに伴い、現行の方針文書（`AGENTS.md`、`PROJECTS-AND-HANDOFF.md`、`detection-improvement-policy.md`、`ZAP-RESEND-WORKBENCH-PROPOSAL.md`）が置いていた「観測後のみ」「手動1件ずつ」「能動診断の既定無効」等の制約は、自動実行として最適な設計へ置き換える。本仕様の改訂に合わせ、2026-10-17 にオーナーの決定で攻撃コードを含む診断エンジンの実装を認める方針へ改訂し、上記の方針文書を本仕様と整合させた。以後、本仕様の方針を変更するときは方針文書も同時に更新する。
 
 置き換えの原則は次のとおり。安全側の制御（許可範囲、認可、上限、証拠）は自動化と両立させて維持し、人手を前提にした手順上の縛りだけを外す。
 
@@ -356,9 +356,9 @@ ScopePilot 本体の BSD-3-Clause 方針を維持する。ZAP 本体は Apache-2
 
 1. 実際に置き換える Burp の操作・拡張の一覧と、業務完結を判断するシナリオ。
 2. 1.3 の費用比較に使う利用者数、ライセンス額、保守工数の見積り。
-3. 3.1 の方針切り替えに合わせた方針文書（`AGENTS.md` 等）の改訂内容と、改訂の順序。
+3. 3.1 の方針切り替えに合わせた方針文書（`AGENTS.md` 等）の改訂内容と、改訂の順序。（2026-10-17 完了: 攻撃コードを含む診断エンジンの実装を認める方針へ改訂し、`AGENTS.md`、`detection-improvement-policy.md`、`ZAP-RESEND-WORKBENCH-PROPOSAL.md`、`PROJECTS-AND-HANDOFF.md` を本仕様と整合済み。以後は本仕様の変更に合わせて方針文書も更新する）
 4. F02・F04・F05・F15 の API と通信制御の技術検証。系列 B では最終 OS マトリクス。
 5. 更新担当、審査・公開の頻度、署名・公証、OAST の公開環境を含む保守予算。
 6. 各機能の画面仕様、共通モデル、アダプター契約、段階ごとのバックログ。
 
-本改訂は、ScopePilot の目的を診断の自動実行に定める。実装着手時には、既存の `AGENTS.md`、`docs/PROJECTS-AND-HANDOFF.md`、`docs/detection-improvement-policy.md`、`docs/ZAP-RESEND-WORKBENCH-PROPOSAL.md` を本仕様の自動実行方針と整合するよう更新する（3.1）。更新までは各文書の既存記述が有効なため、方針文書の改訂を実装の最初の作業に含める。安全側の制御（許可範囲・認可・上限・証拠）は、方針更新後も維持する前提とする。
+本改訂は、ScopePilot の目的を診断の自動実行に定める。2026-10-17 に、`AGENTS.md`、`docs/PROJECTS-AND-HANDOFF.md`、`docs/detection-improvement-policy.md`、`docs/ZAP-RESEND-WORKBENCH-PROPOSAL.md` を本仕様の自動実行方針と整合させた（攻撃コードを含む診断エンジンの実装を認める方針改訂。3.1）。以後、本仕様の方針を変更するときは方針文書も同時に更新する。安全側の制御（許可範囲・認可・上限・証拠）は、方針更新後も維持する前提とする。
