@@ -12,7 +12,10 @@ public sealed class EnvironmentProbe
         var codexPath = ResolveExecutable("codex.exe", FindCodexInstallations());
         var nodePath = FindNode();
         var npxPath = ResolveExecutable("npx.cmd", [Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "npx.cmd")]);
-        var codex = await ProbeAsync("Codex CLI", codexPath, "--version");
+        // 画面探索のAIがGLMならzcode CLIを、それ以外はCodex CLIを確認する。
+        var codex = project?.ExplorationAi?.Provider == DocumentAiProvider.Glm
+            ? ProbeZcode()
+            : await ProbeAsync("Codex CLI", codexPath, "--version");
         var node = await ProbeAsync("Node.js", nodePath, "--version");
         var npm = await ProbeAsync("npm / npx", npxPath, "--version");
         if (project is not null)
@@ -40,6 +43,15 @@ public sealed class EnvironmentProbe
             new EnvironmentCheck("Playwright MCP", npm.Available, npm.Available
                 ? $"npxを検出しました: {npxPath}"
                 : "npxが見つかりません。Node.jsのnpm/npxを利用可能にしてください。")];
+    }
+
+    private static EnvironmentCheck ProbeZcode()
+    {
+        var launch = ApiDocumentAiRunner.FindLaunch(DocumentAiProvider.Glm);
+        if (launch is null) return new("GLM（zcode）", false, "zcode CLI（%APPDATA%\\npm）とnode.jsが見つかりません。画面探索のAIをGLMにする場合はインストールしてください。");
+        return AiConnectionChecker.GlmCredentialAvailable()
+            ? new("GLM（zcode）", true, $"{launch.DisplayPath}（画面探索・認証はAPIキーまたはzcode login）")
+            : new("GLM（zcode）", false, "APIキーもZ.aiサインインも確認できません。アプリ設定でAPIキーを登録するか zcode login でサインインしてください。");
     }
 
     private static async Task<EnvironmentCheck> ProbeAsync(string name, string? command, string arguments)

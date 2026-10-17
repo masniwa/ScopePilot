@@ -22,11 +22,15 @@ public sealed class ZapCliRunner
         Func<EngagementProject, ZapPackage, CancellationToken, Task<ZapAuthVerification>>? verifyAuthentication = null) =>
         (_execute, _verifyAuthentication, _prepareAddons) = (execute, verifyAuthentication, false);
     public async Task<ZapRunResult> RunAsync(EngagementProject project, ZapPackage package,
-        IProgress<string>? progress, CancellationToken cancellationToken, bool activeScanAcknowledged = false)
+        IProgress<string>? progress, CancellationToken cancellationToken, bool activeScanAcknowledged = false,
+        ZapScanTuning? tuning = null)
     {
         if (package.MessageCount == 0 || package.PlanEvidence is null || package.HarEvidence is null)
             throw new InvalidOperationException("観測済み応答を含むHARを取り込んでください。API下書きのみでは診断できません。");
         var settings = new DiagnosticToolSettings { JavaPath = project.DiagnosticTools.JavaPath, ZapJarPath = project.DiagnosticTools.ZapJarPath };
+        // 案件側で空欄のときはアプリ設定（%APPDATA%）の既定パスを使う。
+        AppSettingsService.ApplyZapToolDefaults(settings);
+        var limits = (tuning ?? ZapScanTuning.Defaults).Normalized();
         if (!File.Exists(settings.ZapJarPath) || Path.GetExtension(settings.ZapJarPath) != ".jar" ||
             !File.Exists(settings.JavaPath) || !Path.GetFileName(settings.JavaPath).Equals("java.exe", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("ZAPのJARとJavaのjava.exeを指定してください。zap.exeはCLI引数に対応していません。");
@@ -58,7 +62,7 @@ public sealed class ZapCliRunner
         var strength = ZapActiveScanProfile.NormalizeStrength(project.DiagnosticTools.ActiveScanStrength);
         var threshold = ZapActiveScanProfile.NormalizeThreshold(project.DiagnosticTools.ActiveScanThreshold);
         var expected = ZapHandoffService.CreatePlan(recordedTargets, Math.Clamp(project.MaxMinutes, 1, 120), package.ActiveScan,
-            strength, threshold, package.AuthCookieHeader, package.AuthCookieScopeRegex);
+            strength, threshold, package.AuthCookieHeader, package.AuthCookieScopeRegex, limits);
         if (await File.ReadAllTextAsync(package.PlanPath, cancellationToken) != expected)
             throw new InvalidDataException("ScopePilotが生成したパッシブ計画と一致しません。新しいパッケージを作成してください。");
         if (File.Exists(Path.Combine(package.Directory, "zap-run.log")) || File.Exists(Path.Combine(package.Directory, "reports", "zap-report.json")))
@@ -75,8 +79,10 @@ public sealed class ZapCliRunner
                 projectId = project.Id, role = project.ActiveRole, targets = recordedTargets,
                 allowedOrigins = project.AllowedOrigins.Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 authentication,
-                settings = new { strength, threshold, maxTargets = ZapActiveScanProfile.NormalizeTargets(project.DiagnosticTools.MaxActiveScanTargets), maxRuleDurationInMins = 1 },
-                safeguards = new { strength, threshold, delayInMs = 100, threadPerHost = 1, maxAlertsPerRule = 10 }
+                settings = new { strength, threshold, maxTargets = ZapActiveScanProfile.NormalizeTargets(project.DiagnosticTools.MaxActiveScanTargets),
+                    maxRuleDurationInMins = limits.MaxRuleDurationInMins, maxAlertsPerRule = limits.MaxAlertsPerRule },
+                safeguards = new { strength, threshold, delayInMs = limits.DelayInMs, threadPerHost = limits.ThreadPerHost,
+                    scanHeadersAllRequests = limits.ScanHeadersAllRequests, addQueryParam = limits.AddQueryParam, handleAntiCSRFTokens = true }
             }, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
         }
         await ZapHandoffService.WriteStatusAsync(package.Directory, "running", package.MessageCount, null);

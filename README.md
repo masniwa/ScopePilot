@@ -17,12 +17,28 @@ A4の日本語レポート書式で、見出し・表・リスト・コード・
 
 ScopePilot本体のソースコード、スクリプト、ドキュメントは **BSD-3-Clause** で公開します。著作権者は `umberbyte` です。利用・改変・再配布の条件と免責事項は [LICENSE](LICENSE) を参照してください。第三者のコンポーネントには各コンポーネントのライセンスが適用されます。詳細は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) に記載しています。
 
+## 画面探索のAI
+
+Web探索モードでは、リンク巡回の後にAIがPlaywright MCPで探索ブラウザを操作し、代表パターンの機能を確認します。このAIは案件設定の「画面探索のAI」で、Codex CLI（既定・Codex CLIの既定モデル）またはGLM（Z.ai・zcode。GLM-5.3 / GLM-5.3 flash）から選びます。入力ドキュメントを読み取るAIとは別の設定です。Claude Code CLIは画面探索には未対応です。使ったAIは実行フォルダーの `engagement.json`（`explorationAi`）へ記録します。
+
+どちらのAIでも、使えるMCPツールは同じです（`browser_tabs`・`browser_snapshot`・`browser_navigate`・`browser_network_requests`・`browser_take_screenshot`、Burp連携時は履歴参照の2ツール）。クリック・入力・任意コード実行・ファイルアップロードは使えません。
+
+- Codex CLI: 読み取り専用サンドボックス・承認ポリシー・MCPの許可ツール指定・`--output-schema` による構造化出力で実行します（従来どおり）。
+- GLM（zcode）: 実行内の分離設定（`zcode-exploration-settings.json`。ユーザーのフック・プラグイン・スキル・サブエージェントは無効）にMCPサーバーを登録し、組み込みツール（シェル・ファイル操作・Web取得・ワークフロー）はすべて `--disallowed-tools` で除外します。zcodeにはMCPツール単位の許可指定がないため、アプリ同梱の `tools/mcp-tool-filter.js` をMCPサーバーの前段に置き、許可外のツールをツール一覧から除いて呼び出しも拒否します。zcodeにはスキーマの強制機能がないため、結果スキーマを指示へ埋め込み、必須項目を検証してから `zcode-result.json` へ保存します。zcodeは途中経過を出力しないため、結果は終了時に表示されます。実行ログは `zcode-run.log` です。認証はアプリ設定のAPIキー、またはzcode loginのサインインを使います。
+
 ## クローリング用の入力ドキュメント
 
 Web探索（クローリング）モードでは、案件設定の「入力ドキュメント（仕様書・操作手順）」で対象の文書を選択できます。
 Markdown・TXT・HTML・JSON・YAMLのUTF-8文書（最大250,000文字）に対応します。PDF・Wordはテキストへ変換してください。
 文書をプロジェクト内の `inputs/` へコピーし、［保存］で選択設定をプロジェクトファイルへ保存します。文書を変更しても自動保存しません。
-探索時は実行フォルダーに文書のスナップショットを保存し、Codexが画面・通常利用の機能の理解に参照します。文書の情報と実際の観測結果を区別し、許可Originと禁止操作は案件設定を適用します。
+探索時は実行フォルダーに文書のスナップショットを保存し、選択したAIが画面・通常利用の機能の理解に参照します。文書の情報と実際の観測結果を区別し、許可Originと禁止操作は案件設定を適用します。
+探索の開始時、文書を読み取るAI（Codex CLI・Claude Code CLI・GLM。モデルと推論レベルはAPIドキュメントモードと同じ選択肢。GLMの推論レベルはzcode側の設定に従います）が文書から次の補助情報（document hints）を抽出し、探索へ利用します。文書が変わっていない場合は前回の抽出結果を使い、抽出に使ったAIは実行履歴のdocumentHints（extractedBy）へ記録します。
+- クローリングでは辿り着かないAPIや管理ページの発見: 許可Origin内の文書記載URLをクローラの追加開始点へ渡します（通常の巡回と同じOrigin・禁止操作・上限の検査を受けます）
+- 認証情報の把握: ロールごとの認証方式と文書内の所在を認証待ちの案内へ併記します。パスワード等の秘密値は派生成果物へ複写しません
+- クローリング結果の優先付け: 個人情報・決済など文書の優先規則に該当するパターンを高優先としてAI入力の先頭へ並べます
+- APIパラメータのバリエーション確認: 文書記載のパラメーター（名前・例値・必須）を一致する代表パターンへ添付します
+- その他付随情報: 制約・前提をAI入力とログへ記録します
+補助情報は「文書の記載」であり観測事実ではありません。未観測の文書記載エンドポイントは診断対象に含めず、未確認として記録します。抽出に失敗しても探索は継続し、次回の実行で再試行します。抽出の内容と方針は `AGENTS.md` の「入力ドキュメントの活用」に定めています。
 ［指定を解除］で探索への参照を止められます。取り込んだ原本と過去の実行文書はプロジェクト内に残ります。APIモードの文書とは別に管理します。
 
 ## 探索用プロキシ（Burp / ZAP）
@@ -59,9 +75,19 @@ ZAPは探索ごとに専用のdaemonをSafeモードで起動し、既存のク�
 Burp履歴MCPは任意です。利用できない場合やZAP使用時は、PlaywrightとHARの記録を使用します。
 実際に使用したプロキシは実行履歴から確認できます。
 
+## アプリ設定
+
+「アプリ設定」画面で、ユーザー単位の既定値を `%APPDATA%\ScopePilot\settings.json` に保存します。
+
+- ZAP実行環境: ZAPのJARと `java.exe` の既定パス。案件設定が空欄のときに使用します。
+- ZAPアクティブ診断のチューニング: ルールごとの実行上限（1〜10分）・警告上限（1〜100件）・要求間隔（0〜1000ms）・ホストごとのスレッド数（1〜4）・すべての要求でのヘッダー診断・未観測パラメーターの追加。既定は従来どおり（1分・10件・100ms・1スレッド・ともに無効）です。値はZAP計画・再生成検査・承認証跡へ反映されます。
+- Burp MCPプロキシ: `mcp-proxy-all.jar` の場所。空欄なら環境変数 `SCOPEPILOT_BURP_PROXY_JAR`、次に既定位置の順に解決します。
+- AI連携: Codex CLI・Claude Code CLI・GLM（Z.ai・zcode）を水平線で区切った欄に分け、AIごとに接続状況を確認できます（［すべて確認］で一括確認も可能）。Codex CLIは `codex login status`、Claude Code CLIは実行ファイル（`%USERPROFILE%\.local\bin` または `%APPDATA%\npm` 配布）と認証情報、GLMはzcode CLI（`%APPDATA%\npm` 配布）と、APIキーまたはZ.aiサインイン（`zcode login`）を確認します。いずれもモデルへの生成要求（課金対象）は行いません。
+- GLMのAPIキー: GLM欄でZ.ai Coding PlanのAPIキーを登録できます。入力して［設定を保存］で登録し、Windows DPAPI（ユーザー単位）で暗号化して設定ファイルへ保存します。実行時は「設定ファイル → 環境変数 `ZAI_API_KEY` → `Z_AI_API_KEY`」の順に解決し、キーがなければ `zcode login` のサインインで実行します。［登録を解除］で削除できます。［既定値に戻す］ではキーの登録を保持します。
+
 ## APIドキュメントモード
 
-案件設定の「入力モード」で、既存のWeb探索とAPIドキュメントからのリクエスト生成を切り替えます。APIモードはクローリングを行わず、Codex CLIまたはClaude Code CLIが読み込んだ文書を解釈します。
+案件設定の「入力モード」で、既存のWeb探索とAPIドキュメントからのリクエスト生成を切り替えます。APIモードはクローリングを行わず、Codex CLI・Claude Code CLI・GLM（Z.ai・zcode）のいずれかが読み込んだ文書を解釈します。プロバイダーごとにモデル（Codex: GPT-6.1-Sol/GPT-6-Astra/GPT-6-Sol/GPT-6-Luna/Daybreak Blue、Claude: Opus 5.5/Sonnet 5.5/Fable 5.1、GLM: GLM-5.3/GLM-5.3 flash）を選択でき、案件に保存されます。推論レベル（Highest/High/Middle/Low）はCodexとClaude Codeでのみ選択できます（GLMはzcode側の設定に従うため選択不可）。
 
 1. 入力モードで「APIドキュメント」を選び、診断を許可されたOriginを設定します。
 2. 「ドキュメントを選択」でOpenAPI / SwaggerのJSON・YAML、Postman Collection、Markdown・HTML・TXTのAPI仕様書を読み込みます。対象はテキスト文書で、上限は250,000文字です。PDF・Wordはテキストへ変換してから読み込んでください。
@@ -75,7 +101,7 @@ Burp履歴MCPは任意です。利用できない場合やZAP使用時は、Play
 
 読み込んだ文書は選択したAIへ渡され、案件JSONと実行履歴へ保存されます。バックアップにも含まれます。生成し直すと下書き一覧と採用状態が置き換わります。失敗や停止では、既存の下書きを保持します。実行履歴ではAPI実行ログ・生成結果・生成サマリーを参照し、同じ文書を現在の許可範囲で再生成できます。
 
-Codexは `exec --output-schema`、Claude Codeは `-p --json-schema --output-format json` で構造化出力を返します。APIモードではユーザーのMCP登録を使わず、文書を標準入力から渡します。Codexは `--ignore-user-config` 対応版、Claude Codeは `--safe-mode`・構造化出力対応のネイティブ版（通常は `%USERPROFILE%\.local\bin\claude.exe`）が必要です。既存のログインを使用します。Claudeの `--bare` はサブスクリプションのログインを使わないため、この連携では認証を保持する `--safe-mode` とツール無効化を使用します。CLIオプションの出典: [Codex非対話実行](https://developers.openai.com/codex/noninteractive)、[Claude Code CLI](https://code.claude.com/docs/en/cli-reference)。
+Codexは `exec --output-schema`、Claude Codeは `-p --json-schema --output-format json` で構造化出力を返します。APIモードではユーザーのMCP登録を使わず、文書を標準入力から渡します。Codexは `--ignore-user-config` 対応版（`%LOCALAPPDATA%\OpenAI\Codex\bin` など）、Claude Codeは `--safe-mode`・構造化出力対応の実行ファイル（`%USERPROFILE%\.local\bin` または `%APPDATA%\npm` 配布の `node_modules\@anthropic-ai\claude-code\bin\claude.exe`）が必要です。既存のログインを使用します。Claudeの `--bare` はサブスクリプションのログインを使わないため、この連携では認証を保持する `--safe-mode` とツール無効化を使用します。推論レベルはCodexでは `model_reasoning_effort`（Highest=xhigh）、Claude Codeでは `MAX_THINKING_TOKENS` へ変換します。GLMはZCode実装のzcode CLI（`%APPDATA%\npm` 配布。node.jsで起動）を使い、認証はアプリ設定に登録したAPIキー（または環境変数 `ZAI_API_KEY`）を優先し、ない場合はzcode自身のZ.aiサインイン（`zcode login`）を使います。APIキーを使う場合は、Z.ai Coding Planテンプレート（`zai-api`）を使う実行ごとのプロバイダー設定を `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` で渡し、モデルを `scopepilot-zai/GLM-5.3` 形式で指定します。キーを含むこの設定ファイルは証跡となる実行フォルダーではなくユーザーの一時フォルダーへ作成し、実行後に削除します。実行ログには認証方式（`auth=api-key` / `auth=zcode-login`）だけを記録します。プロンプトは `--attach` で渡し、`--json` の最終応答（response）を結果として使います。zcodeにはスキーマ強制がないため、`-p` 指示へ最終応答のJSONスキーマを埋め込み、全ツールを無効化し、ユーザーのフック・プラグインを無効化した分離設定（実行内 `zcode-settings.json`）で実行します。サインインを使う場合、モデルは `--model account:zai-individual-coding-plan/GLM-5.3` 形式で指定します。CLIオプションの出典: [Codex非対話実行](https://developers.openai.com/codex/noninteractive)、[Claude Code CLI](https://code.claude.com/docs/en/cli-reference)。
 
 ## 現在の実装
 
@@ -98,14 +124,14 @@ Codexは `exec --output-schema`、Claude Codeは `-p --json-schema --output-form
 - 採用候補ごとの「静的と断定できなかった理由」と診断実行時の注意事項
 - 認証、権限、ファイル、外部連携、状態変更、API、AI機能、運用・クラウド機能などの初期分類
 - Codex、Node.js、Playwright MCP、Burp MCPの環境チェック
-- Codex探索ジョブの起動、実行ログ表示、停止
+- 画面探索ジョブ（Codex CLIまたはGLM（zcode））の起動、実行ログ表示、停止
 - 環境確認・高速クロール・AI入力整理・Codex確認・結果取込の段階別進捗表示
 - Playwrightによる画面探索とBurp経由の通信観測
 - 高速GETクローラによるサイト全体のリンク巡回
 - `robots.txt`のSitemap指定と同一Originの`sitemap.xml`からのURL発見（既存の上限・禁止操作・許可Originを適用）
 - HTTPメソッド、Content-Type、拡張子、URL、クエリ、フォーム、応答ステータス、認証ロールによるAI投入前のパターン分類
 - 静的ページ・画像・CSS・JavaScript・フォント等のAI入力除外と、動的代表パターンへの集約
-- AI確認対象がない場合のCodex探索自動省略
+- AI確認対象がない場合の画面探索の自動省略
 - 開始URLは静的画面候補に見えても初回のAI確認を省略しない保護
 - MFA、CAPTCHA、SSOなどの手動操作待ちと同一ジョブでの再開
 - 探索完了後の `observed-requests.jsonl` 自動取込

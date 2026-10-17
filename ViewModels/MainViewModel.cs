@@ -17,6 +17,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ExplorationPackageBuilder _packageBuilder = new();
     private readonly McpSetupService _mcpSetup = new();
     private readonly CodexExplorationRunner _runner = new();
+    private readonly ZcodeExplorationRunner _zcodeRunner = new();
     private readonly FastCrawlerRunner _fastCrawler = new();
     private readonly AiInputBuilder _aiInputBuilder = new();
     private readonly BurpScopeExportService _burpScopeExport = new();
@@ -80,7 +81,17 @@ public sealed partial class MainViewModel : ObservableObject
         ClearExplorationDocumentCommand = new RelayCommand(ClearExplorationDocument, () => !IsRunning && HasExplorationDocument);
     }
 
-    public EngagementProject Project { get => _project; private set { PrepareProject(value); if (SetProperty(ref _project, value)) RefreshSummary(); } }
+    public EngagementProject Project
+    {
+        get => _project;
+        private set
+        {
+            PrepareProject(value);
+            if (!SetProperty(ref _project, value)) return;
+            RefreshSummary();
+            RaisePropertyChanged(nameof(ActiveRole));
+        }
+    }
     public ObservableCollection<string> Logs { get; } = [];
     public ObservableCollection<ExplorationRunSummary> RunHistory { get; } = [];
     public ObservableCollection<string> RoleOptions { get; } = [];
@@ -116,6 +127,98 @@ public sealed partial class MainViewModel : ObservableObject
     public bool HasExplorationDocument => !string.IsNullOrWhiteSpace(Project.ExplorationDocument.Content);
     public string ExplorationDocumentName => HasExplorationDocument
         ? $"{Project.ExplorationDocument.FileName}（{Project.ExplorationDocument.Content.Length:N0}文字）" : "ドキュメント未選択";
+    public int DocProviderIndex
+    {
+        get => (int)Project.ExplorationDocument.AiProvider;
+        set
+        {
+            if (IsRunning || value is not (0 or 1 or 2) || (int)Project.ExplorationDocument.AiProvider == value) return;
+            Project.ExplorationDocument.AiProvider = (DocumentAiProvider)value;
+            // プロバイダーを変えたらモデルもその既定へ戻す。
+            Project.ExplorationDocument.Model = DocumentAiCatalog.Models(Project.ExplorationDocument.AiProvider)[0].Id;
+            RaisePropertyChanged();
+            RaisePropertyChanged(nameof(DocModelOptions));
+            RaisePropertyChanged(nameof(DocModelIndex));
+            RaiseAfterItemsChanged(nameof(DocModelLabel));
+            RaisePropertyChanged(nameof(DocReasoningEnabled));
+            RefreshSaveState();
+        }
+    }
+    // 画面探索のAI: 0=Codex CLI、1=GLM（zcode）。
+    public int ExplorationAiIndex
+    {
+        get => Project.ExplorationAi.Provider == DocumentAiProvider.Glm ? 1 : 0;
+        set
+        {
+            if (IsRunning || value is not (0 or 1) || ExplorationAiIndex == value) return;
+            Project.ExplorationAi.Provider = value == 1 ? DocumentAiProvider.Glm : DocumentAiProvider.Codex;
+            Project.ExplorationAi.Model = value == 1 ? DocumentAiCatalog.Models(DocumentAiProvider.Glm)[0].Id : string.Empty;
+            RaisePropertyChanged();
+            RaisePropertyChanged(nameof(ExplorationAiModelOptions));
+            RaisePropertyChanged(nameof(ExplorationAiModelIndex));
+            RaiseAfterItemsChanged(nameof(ExplorationAiModelLabel));
+            RaisePropertyChanged(nameof(ExplorationAiModelEnabled));
+            RefreshSaveState();
+        }
+    }
+    // Codexの画面探索は従来どおりCodex CLIの既定モデルを使う。
+    public IReadOnlyList<string> ExplorationAiModelOptions => Project.ExplorationAi.Provider == DocumentAiProvider.Glm
+        ? DocumentAiCatalog.ModelLabels(DocumentAiProvider.Glm) : ["Codex CLIの既定モデル"];
+    public bool ExplorationAiModelEnabled => Project.ExplorationAi.Provider == DocumentAiProvider.Glm;
+    public int ExplorationAiModelIndex
+    {
+        get
+        {
+            if (Project.ExplorationAi.Provider != DocumentAiProvider.Glm) return 0;
+            var id = DocumentAiCatalog.NormalizeModel(DocumentAiProvider.Glm, Project.ExplorationAi.Model);
+            return Math.Max(0, DocumentAiCatalog.Models(DocumentAiProvider.Glm).ToList().FindIndex(x => x.Id == id));
+        }
+        set
+        {
+            if (IsRunning || Project.ExplorationAi.Provider != DocumentAiProvider.Glm) return;
+            var models = DocumentAiCatalog.Models(DocumentAiProvider.Glm);
+            if (value < 0 || value >= models.Count || Project.ExplorationAi.Model == models[value].Id) return;
+            Project.ExplorationAi.Model = models[value].Id;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
+    }
+    public IReadOnlyList<string> DocModelOptions => DocumentAiCatalog.ModelLabels(Project.ExplorationDocument.AiProvider);
+    // GLM（zcode）は推論レベルをCLIから指定できないため、選択を無効にする。
+    public bool DocReasoningEnabled => Project.ExplorationDocument.AiProvider != DocumentAiProvider.Glm;
+    public int DocModelIndex
+    {
+        get
+        {
+            var models = DocumentAiCatalog.Models(Project.ExplorationDocument.AiProvider);
+            var id = DocumentAiCatalog.NormalizeModel(Project.ExplorationDocument.AiProvider, Project.ExplorationDocument.Model);
+            var index = models.ToList().FindIndex(x => x.Id == id);
+            return index < 0 ? 0 : index;
+        }
+        set
+        {
+            if (IsRunning) return;
+            var models = DocumentAiCatalog.Models(Project.ExplorationDocument.AiProvider);
+            if (value < 0 || value >= models.Count) return;
+            var id = models[value].Id;
+            if (Project.ExplorationDocument.Model == id) return;
+            Project.ExplorationDocument.Model = id;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
+    }
+    public IReadOnlyList<string> DocReasoningOptions => DocumentAiCatalog.ReasoningLevels;
+    public int DocReasoningIndex
+    {
+        get => (int)Project.ExplorationDocument.ReasoningLevel;
+        set
+        {
+            if (IsRunning || !Enum.IsDefined(typeof(AiReasoningLevel), value) || (int)Project.ExplorationDocument.ReasoningLevel == value) return;
+            Project.ExplorationDocument.ReasoningLevel = (AiReasoningLevel)value;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
+    }
     public bool IsApiMode => Project.Mode == InputMode.ApiDocument;
     public int ProjectModeIndex
     {
@@ -132,7 +235,89 @@ public sealed partial class MainViewModel : ObservableObject
     public int ApiProviderIndex
     {
         get => (int)Project.ApiDocument.Provider;
-        set { if (!IsRunning && value is 0 or 1) { Project.ApiDocument.Provider = (DocumentAiProvider)value; RaisePropertyChanged(); } }
+        set
+        {
+            if (IsRunning || value is not (0 or 1 or 2) || (int)Project.ApiDocument.Provider == value) return;
+            Project.ApiDocument.Provider = (DocumentAiProvider)value;
+            // プロバイダーを変えたらモデルもその既定へ戻す。
+            Project.ApiDocument.Model = DocumentAiCatalog.Models(Project.ApiDocument.Provider)[0].Id;
+            RaisePropertyChanged();
+            RaisePropertyChanged(nameof(ApiModelOptions));
+            RaisePropertyChanged(nameof(ApiModelIndex));
+            RaiseAfterItemsChanged(nameof(ApiModelLabel));
+            RaisePropertyChanged(nameof(ApiReasoningEnabled));
+        }
+    }
+    public IReadOnlyList<string> ApiModelOptions => DocumentAiCatalog.ModelLabels(Project.ApiDocument.Provider);
+    // GLM（zcode）は推論レベルをCLIから指定できないため、選択を無効にする。
+    public bool ApiReasoningEnabled => Project.ApiDocument.Provider != DocumentAiProvider.Glm;
+    public int ApiModelIndex
+    {
+        get
+        {
+            var models = DocumentAiCatalog.Models(Project.ApiDocument.Provider);
+            var id = DocumentAiCatalog.NormalizeModel(Project.ApiDocument.Provider, Project.ApiDocument.Model);
+            var index = models.ToList().FindIndex(x => x.Id == id);
+            return index < 0 ? 0 : index;
+        }
+        set
+        {
+            if (IsRunning) return;
+            var models = DocumentAiCatalog.Models(Project.ApiDocument.Provider);
+            if (value < 0 || value >= models.Count) return;
+            var id = models[value].Id;
+            if (Project.ApiDocument.Model == id) return;
+            Project.ApiDocument.Model = id;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
+    }
+    // モデルのドロップダウンは表示名（SelectedItem）でバインドする。位置（SelectedIndex）でバインドすると、
+    // AIを切り替えて候補一覧が置き換わったとき、位置が同じ0のままのため表示が空欄になる。
+    // 候補の置き換え中にドロップダウンが一時的に渡すnullは無視する（ここで通知を返すと選択が同期せず空欄になる）。
+    // AIの切替後は各プロバイダーの設定でモデルを先頭へ戻し、このプロパティの変更を通知する。
+    public string? ApiModelLabel
+    {
+        get => _blankModelLabel == nameof(ApiModelLabel) ? null : ApiModelOptions[ApiModelIndex];
+        set { if (value is not null && ApiModelOptions.ToList().IndexOf(value) is >= 0 and var index) ApiModelIndex = index; }
+    }
+    public string? DocModelLabel
+    {
+        get => _blankModelLabel == nameof(DocModelLabel) ? null : DocModelOptions[DocModelIndex];
+        set { if (value is not null && DocModelOptions.ToList().IndexOf(value) is >= 0 and var index) DocModelIndex = index; }
+    }
+    public string? ExplorationAiModelLabel
+    {
+        get => _blankModelLabel == nameof(ExplorationAiModelLabel) ? null : ExplorationAiModelOptions[ExplorationAiModelIndex];
+        set { if (value is not null && ExplorationAiModelOptions.ToList().IndexOf(value) is >= 0 and var index) ExplorationAiModelIndex = index; }
+    }
+    // ドロップダウンが新しい候補一覧を取り込んだ後に選択を通知する（同期で通知すると一覧の置き換え前に選択され、空欄になる）。
+    // 置き換え中にWPFが選択を読み直して書き戻すため、置き換え後に一度空（null）を経由して通知し、選択を同期させる。
+    private void RaiseAfterItemsChanged(string propertyName)
+    {
+        void Raise()
+        {
+            _blankModelLabel = propertyName;
+            RaisePropertyChanged(propertyName);
+            _blankModelLabel = null;
+            RaisePropertyChanged(propertyName);
+        }
+        if (System.Windows.Application.Current?.Dispatcher is { } dispatcher)
+            dispatcher.BeginInvoke(Raise, System.Windows.Threading.DispatcherPriority.DataBind);
+        else Raise();
+    }
+    private string? _blankModelLabel;
+    public IReadOnlyList<string> ApiReasoningOptions => DocumentAiCatalog.ReasoningLevels;
+    public int ApiReasoningIndex
+    {
+        get => (int)Project.ApiDocument.ReasoningLevel;
+        set
+        {
+            if (IsRunning || !Enum.IsDefined(typeof(AiReasoningLevel), value) || (int)Project.ApiDocument.ReasoningLevel == value) return;
+            Project.ApiDocument.ReasoningLevel = (AiReasoningLevel)value;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
     }
     public string ApiDocumentName => string.IsNullOrWhiteSpace(Project.ApiDocument.FileName) ? "ドキュメント未選択" : $"{Project.ApiDocument.FileName}（{Project.ApiDocument.Content.Length:N0}文字）";
     public string StartActionText => IsApiMode ? "APIリクエストを生成" : "探索を開始";
@@ -194,7 +379,12 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             await EnsureProjectAsync();
+            var previous = Project.ExplorationDocument;
             var document = await ExplorationDocumentService.ImportAsync(Project, path);
+            // 文書を読み替えても補助情報の抽出AI指定は引き継ぐ。
+            document.AiProvider = previous.AiProvider;
+            document.Model = previous.Model;
+            document.ReasoningLevel = previous.ReasoningLevel;
             Project.ExplorationDocument = document;
             Project.Inputs.Add(document.Source!);
             RefreshModeProperties();
@@ -237,8 +427,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void RefreshModeProperties()
     {
-        foreach (var name in new[] { nameof(IsApiMode), nameof(ProjectModeIndex), nameof(ExplorationProxyModeIndex), nameof(ApiProviderIndex), nameof(ApiDocumentName), nameof(ExplorationDocumentName), nameof(HasExplorationDocument), nameof(StartActionText),
-            nameof(RunModeDescription), nameof(BurpExportActionText), nameof(BurpListHeader), nameof(ApiRequestSummary), nameof(SummaryText), nameof(ReviewPageTag), nameof(ReviewNavigationText), nameof(RoleHelpText),
+        foreach (var name in new[] { nameof(IsApiMode), nameof(ProjectModeIndex), nameof(ExplorationProxyModeIndex), nameof(ApiProviderIndex), nameof(ApiModelOptions), nameof(ApiModelIndex), nameof(ApiModelLabel), nameof(ApiReasoningOptions), nameof(ApiReasoningIndex), nameof(ApiReasoningEnabled), nameof(DocProviderIndex), nameof(DocModelOptions), nameof(DocModelIndex), nameof(DocModelLabel), nameof(DocReasoningOptions), nameof(DocReasoningIndex), nameof(DocReasoningEnabled), nameof(ExplorationAiIndex), nameof(ExplorationAiModelOptions), nameof(ExplorationAiModelIndex), nameof(ExplorationAiModelLabel), nameof(ExplorationAiModelEnabled), nameof(ApiDocumentName), nameof(ExplorationDocumentName), nameof(HasExplorationDocument), nameof(StartActionText),
+            nameof(RunModeDescription), nameof(BurpExportActionText), nameof(BurpListHeader), nameof(ApiRequestSummary), nameof(SummaryText), nameof(ReviewPageTag), nameof(ReviewNavigationText), nameof(RoleHelpText), nameof(ActiveRole),
             nameof(ExecutionPageHeader), nameof(ExecutionNavigationText), nameof(ExecutionNextText), nameof(RequestLimitLabel), nameof(BurpPageDescription), nameof(BurpModeDescription), nameof(HandoffDescription) }) RaisePropertyChanged(name);
         RaisePropertyChanged(nameof(Project));
         SetupMcpCommand.RaiseCanExecuteChanged();
@@ -314,7 +504,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public Task InitializeAsync()
     {
-        UpdateRoleOptions();
+        UpdateRoleOptions(refreshProject: true);
         Log("プロジェクトファイルを作成または開いてください。");
         RefreshSummary();
         return Task.CompletedTask;
@@ -534,7 +724,11 @@ public sealed partial class MainViewModel : ObservableObject
                     FileName = root.GetProperty("documentName").GetString() ?? "api-document.txt",
                     Content = await File.ReadAllTextAsync(Path.Combine(SelectedRun.Directory, "api-document.txt")),
                     BaseUrl = root.GetProperty("baseUrl").GetString() ?? string.Empty,
-                    Provider = Enum.Parse<DocumentAiProvider>(root.GetProperty("provider").GetString()!)
+                    Provider = Enum.Parse<DocumentAiProvider>(root.GetProperty("provider").GetString()!),
+                    Model = root.TryGetProperty("model", out var modelElement) ? modelElement.GetString() ?? string.Empty : string.Empty,
+                    ReasoningLevel = root.TryGetProperty("reasoningLevel", out var reasoningElement)
+                        && Enum.TryParse<AiReasoningLevel>(reasoningElement.GetString(), true, out var reasoning)
+                        ? reasoning : AiReasoningLevel.Middle
                 };
                 Project.Mode = InputMode.ApiDocument;
                 Project.ActiveRole = root.GetProperty("activeRole").GetString() ?? "未認証";
@@ -551,6 +745,7 @@ public sealed partial class MainViewModel : ObservableObject
     private static void PrepareProject(EngagementProject project)
     {
         project.ExplorationDocument ??= new ExplorationDocumentSettings();
+        project.ExplorationAi ??= new ExplorationAiSettings();
         project.ExplorationProxy ??= new ExplorationProxySettings();
         project.ApiDocument ??= new ApiDocumentSettings();
         project.DiagnosticTools ??= new DiagnosticToolSettings();
@@ -567,16 +762,48 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var request in project.Requests) RequestImporter.Normalize(request);
     }
 
-    public void UpdateRoleOptions()
+    // 今回探索するロール（選択欄のバインド先）。候補の更新中に選択欄が一時的に外す null は無視する。
+    public string ActiveRole
+    {
+        get => Project.ActiveRole;
+        set
+        {
+            if (_updatingRoleOptions || string.IsNullOrEmpty(value) || Project.ActiveRole == value) return;
+            Project.ActiveRole = value;
+            RaisePropertyChanged();
+            RaisePropertyChanged(nameof(AuthenticationRoleOptions));
+        }
+    }
+    private bool _updatingRoleOptions;
+
+    // 認証ロールの入力欄の編集ごとに呼ばれる。案件全体（Project）の変更通知は出さない。
+    // 出すと入力欄自身が案件の値を読み直し、日本語入力の変換中の文字が消える（空欄からは何も入力できなくなる）。
+    public void UpdateRoleOptions() => UpdateRoleOptions(refreshProject: false);
+
+    internal void UpdateRoleOptions(bool refreshProject)
     {
         var roles = Project.Roles.Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (!roles.Contains("未認証", StringComparer.OrdinalIgnoreCase)) roles.Insert(0, "未認証");
-        RoleOptions.Clear();
-        foreach (var role in roles) RoleOptions.Add(role);
-        if (string.IsNullOrWhiteSpace(Project.ActiveRole) || !roles.Contains(Project.ActiveRole, StringComparer.OrdinalIgnoreCase))
-            Project.ActiveRole = roles[0];
-        RaisePropertyChanged(nameof(Project));
+        // 候補は一括で消さずに差分で更新し、選択中のロールが一時的に外れて未認証へ戻らないようにする。
+        _updatingRoleOptions = true;
+        try
+        {
+            for (var index = 0; index < roles.Count; index++)
+            {
+                if (index < RoleOptions.Count && RoleOptions[index] == roles[index]) continue;
+                var existing = RoleOptions.IndexOf(roles[index]);
+                if (existing > index) RoleOptions.Move(existing, index);
+                else RoleOptions.Insert(index, roles[index]);
+            }
+            while (RoleOptions.Count > roles.Count) RoleOptions.RemoveAt(RoleOptions.Count - 1);
+        }
+        finally { _updatingRoleOptions = false; }
+        var current = roles.FirstOrDefault(role => string.Equals(role, Project.ActiveRole, StringComparison.OrdinalIgnoreCase));
+        Project.ActiveRole = current ?? roles[0];
+        RaisePropertyChanged(nameof(ActiveRole));
+        RaisePropertyChanged(nameof(AuthenticationRoleOptions));
+        if (refreshProject) RaisePropertyChanged(nameof(Project));
     }
 
     private static void MergeObservation(ObservedRequest existing, ObservedRequest incoming)
@@ -598,13 +825,43 @@ public sealed partial class MainViewModel : ObservableObject
         if (IsApiMode)
         {
             var provider = Project.ApiDocument.Provider;
-            var executable = ApiDocumentAiRunner.FindExecutable(provider);
-            Log(executable is null ? $"[要設定] {provider} CLIをインストールしてログインしてください。" : $"[OK] {provider} CLI: {executable}。ログイン状態は生成時に確認します。");
+            var launch = ApiDocumentAiRunner.FindLaunch(provider);
+            var name = DocumentAiCatalog.DisplayName(provider);
+            if (provider == DocumentAiProvider.Glm)
+                Log(launch is null
+                    ? $"[要設定] {name} にはzcode CLI（npmグローバル）とnode.jsが必要です。"
+                    : AiConnectionChecker.GlmCredentialAvailable()
+                        ? $"[OK] {name}: {launch.DisplayPath}。認証はAPIキーまたはzcode loginのサインインで、生成時に確認します。"
+                        : $"[要設定] {name}: アプリ設定でAPIキーを登録するか、zcode login でZ.aiへサインインしてください。");
+            else
+                Log(launch is null ? $"[要設定] {name}をインストールしてログインしてください。" : $"[OK] {name}: {launch.DisplayPath}。ログイン状態は生成時に確認します。");
             return;
         }
         Log("環境チェックを開始します。");
         foreach (var item in await _environment.CheckAsync(Project)) Log($"[{(item.Available ? "OK" : "要設定")}] {item.Name}: {item.Detail}");
+        if (HasExplorationDocument)
+        {
+            var provider = Project.ExplorationDocument.AiProvider;
+            var launch = ApiDocumentAiRunner.FindLaunch(provider);
+            var name = DocumentAiCatalog.DisplayName(provider);
+            if (launch is null)
+                Log($"[参考] 入力ドキュメントの補助情報抽出用 {name} が見つかりません。探索は文書なしで続行します。");
+            else if (provider == DocumentAiProvider.Glm && !AiConnectionChecker.GlmCredentialAvailable())
+                Log($"[参考] 入力ドキュメントの補助情報抽出用 {name} にはAPIキーの登録またはZ.aiサインイン（zcode login）が必要です。");
+            else
+                Log($"[参考] 入力ドキュメントの補助情報抽出用 {name}: {launch.DisplayPath}。");
+        }
     }
+
+    // 画面探索のAI（案件設定）。Claude Code CLIは画面探索に未対応のためCodexとして扱う。
+    private DocumentAiProvider ExplorationAiProvider =>
+        ExplorationAiSettings.Supports(Project.ExplorationAi.Provider) ? Project.ExplorationAi.Provider : DocumentAiProvider.Codex;
+    private string ExplorationAiName => DocumentAiCatalog.DisplayName(ExplorationAiProvider);
+
+    private Task<ExplorationRunResult> RunExplorationAiAsync(string path, IProgress<string> progress) =>
+        ExplorationAiProvider == DocumentAiProvider.Glm
+            ? _zcodeRunner.RunAsync(path, Project.ExplorationAi, progress, OnInterventionDetected, _runCancellation!.Token, OnAuthenticationNavigationDetected)
+            : _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation!.Token, OnAuthenticationNavigationDetected);
 
     private async Task SetupMcpAsync()
     {
@@ -640,7 +897,7 @@ public sealed partial class MainViewModel : ObservableObject
         _runCancellation = new CancellationTokenSource();
         try
         {
-            UpdateRoleOptions();
+            UpdateRoleOptions(refreshProject: true);
             ApiDocumentService.Validate(Project);
             _runCancellation.CancelAfter(TimeSpan.FromMinutes(Project.MaxMinutes));
             SetRunProgress("API入力準備", 10, "APIドキュメントと生成条件を保存しています。");
@@ -648,8 +905,8 @@ public sealed partial class MainViewModel : ObservableObject
             Project.Status = ProjectStatus.Organizing;
             await RecordProjectChangeAsync();
             RefreshSummary();
-            SetRunProgress("APIリクエスト生成", 35, $"{Project.ApiDocument.Provider}が文書のAPI定義を読み取っています。");
-            var result = await _apiRunner.RunAsync(_currentRunDirectory, Project.ApiDocument.Provider, new Progress<string>(Log), _runCancellation.Token);
+            SetRunProgress("APIリクエスト生成", 35, $"{DocumentAiCatalog.DisplayName(Project.ApiDocument.Provider)}（{DocumentAiCatalog.NormalizeModel(Project.ApiDocument.Provider, Project.ApiDocument.Model)}・推論{Project.ApiDocument.ReasoningLevel}）が文書のAPI定義を読み取っています。");
+            var result = await _apiRunner.RunAsync(_currentRunDirectory, Project.ApiDocument, new Progress<string>(Log), _runCancellation.Token);
             if (result.Cancelled) throw new OperationCanceledException();
             if (result.ExitCode != 0 || !File.Exists(result.ResultPath))
                 throw new InvalidDataException("AIがリクエスト生成を完了できませんでした。実行履歴のAPI実行ログを確認してください。");
@@ -711,7 +968,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (!await TryEnsureProjectAsync()) return;
         if (IsApiMode) { await StartApiDocumentAsync(); return; }
-        UpdateRoleOptions();
+        UpdateRoleOptions(refreshProject: true);
         SetRunProgress("環境確認", 2, "MCPと実行環境を確認しています。");
         Log($"探索対象ロール: {Project.ActiveRole}");
         _currentRunDirectory = null;
@@ -732,6 +989,7 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             var progress = new Progress<string>(message => { Log(message); UpdateProgressFromLog(message); });
+            await EnsureDocumentHintsAsync(_runCancellation.Token);
             var path = await BuildPackageAsync();
             if (path is null) { Project.Status = ProjectStatus.Failed; return; }
             _currentRunDirectory = path;
@@ -768,7 +1026,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
             if (crawl.ExitCode != 0)
-                Log($"高速クローラが再試行後も終了コード {crawl.ExitCode} で停止しました。取得済みデータを整理し、Codex探索へフォールバックします。");
+                Log($"高速クローラが再試行後も終了コード {crawl.ExitCode} で停止しました。取得済みデータを整理し、{ExplorationAiName}の画面探索へフォールバックします。");
             else
                 Log(crawl.Status == "completed" ? "通常のリンク巡回が完了しました。AI対象を分類します。" : "リンク巡回は部分結果です。未到達・認証・上限の記録を確認してください。");
             if (crawl.AuthenticationBlocked) { Project.Status = ProjectStatus.Partial; await RecoverPartialObservationsAsync(path); return; }
@@ -794,7 +1052,7 @@ public sealed partial class MainViewModel : ObservableObject
                     Log($"AI入力の上限により{aiInput.TruncatedPatternCount:N0}パターンを省略しました。全件の証跡は実行フォルダーに保持しています。");
                 if (!aiInput.RequiresAi && crawl.ExitCode == 0)
                 {
-                    Log("AIで確認すべき動的パターンがないため、Codex探索を起動せず完了します。");
+                    Log($"AIで確認すべき動的パターンがないため、{ExplorationAiName}の画面探索を起動せず完了します。");
                     var fastObservations = Path.Combine(path, "fast-observed-requests.jsonl");
                     if (File.Exists(fastObservations) && new FileInfo(fastObservations).Length > 0)
                         await ImportAsync(fastObservations);
@@ -805,21 +1063,21 @@ public sealed partial class MainViewModel : ObservableObject
                     return;
                 }
                 Log(crawl.ExitCode == 0
-                    ? "代表パターンと、選択されていれば仕様書・操作手順をCodexへ渡して機能理解を開始します。"
-                    : "高速クロールの部分データをCodexへ渡し、代表パターンの確認を継続します。");
-                SetRunProgress("Codex確認", 65, $"{aiInput.RequestPatternCount:N0}件の要求パターンと{aiInput.FormPatternCount:N0}件のフォームを確認しています。");
+                    ? $"代表パターンと、選択されていれば仕様書・操作手順を{ExplorationAiName}へ渡して機能理解を開始します。"
+                    : $"高速クロールの部分データを{ExplorationAiName}へ渡し、代表パターンの確認を継続します。");
+                SetRunProgress("AI確認", 65, $"{aiInput.RequestPatternCount:N0}件の要求パターンと{aiInput.FormPatternCount:N0}件のフォームを確認しています。");
             }
 
             aiWasStarted = true;
-            var result = await _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation.Token, OnAuthenticationNavigationDetected);
+            var result = await RunExplorationAiAsync(path, progress);
             if (!result.Cancelled && result.ExitCode == 0 && await IsTransportFailureAsync(result.ResultPath))
             {
                 Log("Playwright MCPの切断を検出しました。新しいMCPプロセスで探索を1回だけ自動再開します。");
-                SetRunProgress("Codex再接続", 70, "Playwright MCPを新しいプロセスで1回だけ再開しています。");
+                SetRunProgress("AI再接続", 70, "Playwright MCPを新しいプロセスで1回だけ再開しています。");
                 await File.AppendAllTextAsync(Path.Combine(path, "prompt.md"),
                     Environment.NewLine + "前回のPlaywright MCP接続が切断されたため、新しいMCPセッションでの再開です。ai-input.jsonと既存のexploration-summary.jsonを読み、未確認の代表パターンから続行し、最終結果ファイルを置き換えてください。" + Environment.NewLine,
                     _runCancellation.Token);
-                result = await _runner.RunAsync(path, progress, OnInterventionDetected, _runCancellation.Token, OnAuthenticationNavigationDetected);
+                result = await RunExplorationAiAsync(path, progress);
             }
             if (result.Cancelled)
             {
@@ -866,7 +1124,7 @@ public sealed partial class MainViewModel : ObservableObject
                 else if (partialResult)
                 {
                     Project.Status = ProjectStatus.Failed;
-                    Log("Codexが探索を技術エラーとして終了しました。探索結果の説明を確認してください。");
+                    Log($"{ExplorationAiName}が探索を技術エラーとして終了しました。探索結果の説明を確認してください。");
                 }
                 else if (observationFiles.Length == 0)
                 {
@@ -947,6 +1205,50 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    // 入力ドキュメントから探索の補助情報を抽出する。文書が変わっていれば再抽出し、
+    // 失敗しても探索は継続する（AGENTS.md「入力ドキュメントの活用」）。
+    private async Task EnsureDocumentHintsAsync(CancellationToken token)
+    {
+        var document = Project.ExplorationDocument;
+        if (string.IsNullOrWhiteSpace(document.Content)) return;
+        var sha = DocumentHintService.Sha256(document.Content);
+        if (DocumentHintService.IsUsable(document.Hints, sha)) return;
+        var provider = document.AiProvider;
+        if (ApiDocumentAiRunner.FindLaunch(provider) is null)
+        {
+            Log($"[参考] {DocumentAiCatalog.DisplayName(provider)}が見つからないため、入力ドキュメントの補助情報（未到達エンドポイント・認証所在・優先規則）の抽出を省略します。");
+            return;
+        }
+        if (provider == DocumentAiProvider.Glm && !AiConnectionChecker.GlmCredentialAvailable())
+        {
+            Log("[参考] GLMのAPIキーもZ.aiサインイン（zcode login）も確認できないため、入力ドキュメントの補助情報の抽出を省略します。");
+            return;
+        }
+        SetRunProgress("文書補助情報", 5, "入力ドキュメントから探索の補助情報を抽出しています。");
+        var directory = ProjectPaths.Resolve(Project,
+            $"document-hints/{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}"[..31]);
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "prompt.md"), DocumentHintService.BuildPrompt(Project));
+        await File.WriteAllTextAsync(Path.Combine(directory, "hint-schema.json"), DocumentHintService.Schema);
+        var (exitCode, cancelled, resultPath, failure) = await new DocumentHintRunner().RunAsync(directory, document,
+            new Progress<string>(Log), token);
+        if (cancelled) throw new OperationCanceledException(token);
+        if (exitCode != 0 || !File.Exists(resultPath))
+        {
+            document.Hints = null;
+            Log($"入力ドキュメントの補助情報の抽出に失敗しました（終了コード {exitCode}{(failure is null ? string.Empty : $"。原因: {failure}")}）。" +
+                $"文書なしで探索を続行し、次回の実行で再試行します。詳細: {Path.Combine(directory, "document-hints-run.log")}");
+            return;
+        }
+        document.Hints = await DocumentHintService.ParseAsync(await File.ReadAllTextAsync(resultPath), Project, sha);
+        document.Hints.ExtractedBy =
+            $"{DocumentAiCatalog.DisplayName(provider)}（{DocumentAiCatalog.NormalizeModel(provider, document.Model)}・推論{document.ReasoningLevel}）";
+        var hints = document.Hints;
+        Log($"文書補助情報: {hints.Status}。エンドポイント{hints.Endpoints.Length}件（高危先{hints.Endpoints.Count(x => x.Priority == "high")}件）・認証記載{hints.Authentication.Length}件・優先規則{hints.PriorityRules.Length}件・APIパラメーター{hints.ApiVariations.Length}件を抽出しました。");
+        foreach (var limitation in hints.Limitations.Take(5)) Log($"文書補助情報の制約: {limitation}");
+        await RecordProjectChangeAsync();
+    }
+
     private async Task<string?> BuildPackageAsync()
     {
         if (!await TryEnsureProjectAsync()) return null;
@@ -967,6 +1269,7 @@ public sealed partial class MainViewModel : ObservableObject
         _runCancellation?.Cancel();
         _fastCrawler.Stop();
         _runner.Stop();
+        _zcodeRunner.Stop();
         _apiRunner.Stop();
     }
 
@@ -982,7 +1285,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (!RoleOptions.Contains(AuthenticationRole))
             {
                 Project.Roles += Environment.NewLine + AuthenticationRole;
-                UpdateRoleOptions();
+                UpdateRoleOptions(refreshProject: true);
             }
             AuthenticationStatusText = "ユーザーの入力完了を受け付けました。ログイン状態と到達先を確認しています。";
         }
@@ -1023,14 +1326,14 @@ public sealed partial class MainViewModel : ObservableObject
                     if (existing is not null) Project.Findings.Remove(existing);
                     Project.Findings.Add(finding);
                 }
-                Log($"Codex所見を{imported.Count:N0}件取り込みました。深刻度・根拠・制約を確認してください。");
+                Log($"{ExplorationAiName}の所見を{imported.Count:N0}件取り込みました。深刻度・根拠・制約を確認してください。");
                 RefreshSummary();
             }
             else if (result.RootElement.TryGetProperty("findings", out _))
-                Log("Codex結果に取り込み可能な診断所見はありませんでした。");
+                Log($"{ExplorationAiName}の結果に取り込み可能な診断所見はありませんでした。");
             return result.RootElement.TryGetProperty("status", out var status) ? status.GetString() : null;
         }
-        catch { Log($"Codex結果ファイル: {resultPath}"); return null; }
+        catch { Log($"画面探索の結果ファイル: {resultPath}"); return null; }
     }
 
     private static async Task<bool> IsTransportFailureAsync(string resultPath)

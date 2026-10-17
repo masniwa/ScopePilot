@@ -100,6 +100,97 @@
             </ControlTemplate.Triggers>
         </ControlTemplate></Setter.Value></Setter>
     </Style>
+    <!-- 選択肢の中から1つを選ぶリスト（AI・プロキシ・ロールなど）。入力欄と区別できるよう、
+         ラジオボタン付きのカードを横に並べ、選択中のカードを強調する。ListBoxのため選択のバインドとキーボード操作はそのまま使える。 -->
+    <Style x:Key="ChoiceListItem" TargetType="ListBoxItem">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="Margin" Value="0,0,8,8"/><Setter Property="Padding" Value="12,9"/><Setter Property="MinWidth" Value="120"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocus}"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+            <Border x:Name="Card" Padding="{TemplateBinding Padding}" CornerRadius="6" BorderThickness="1" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource Border}">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid Width="16" Height="16" Margin="0,0,10,0" VerticalAlignment="Center">
+                        <Ellipse x:Name="Ring" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" Fill="Transparent"/>
+                        <Ellipse x:Name="Dot" Width="8" Height="8" Fill="{DynamicResource Link}" Visibility="Collapsed"/>
+                    </Grid>
+                    <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Link}"/></Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Link}"/></Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter TargetName="Card" Property="Background" Value="{DynamicResource InfoBackground}"/>
+                    <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Link}"/>
+                    <Setter TargetName="Card" Property="BorderThickness" Value="2"/>
+                    <Setter TargetName="Card" Property="Padding" Value="11,8"/>
+                    <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Link}"/>
+                    <Setter TargetName="Dot" Property="Visibility" Value="Visible"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.6"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="ChoiceList" TargetType="ListBox">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="0"/>
+        <Setter Property="Margin" Value="0,6,0,8"/>
+        <Setter Property="SelectionMode" Value="Single"/>
+        <Setter Property="KeyboardNavigation.DirectionalNavigation" Value="Cycle"/>
+        <Setter Property="ItemContainerStyle" Value="{StaticResource ChoiceListItem}"/>
+        <Setter Property="ItemsPanel"><Setter.Value><ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate></Setter.Value></Setter>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBox">
+            <ItemsPresenter/>
+        </ControlTemplate></Setter.Value></Setter>
+        <Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.8"/></Trigger></Style.Triggers>
+    </Style>
+    <!-- ドロップダウン（モデル選択など）。テーマ色に合わせ、右端の▾で入力欄と区別する。 -->
+    <Style x:Key="ComboToggle" TargetType="ToggleButton">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="Chrome" CornerRadius="4" BorderThickness="1" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource Border}">
+                <TextBlock Text="▾" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="16" Foreground="{DynamicResource TextPrimary}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Link}"/></Trigger>
+                <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Link}"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="Padding" Value="10,7"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem">
+            <Border x:Name="Chrome" Padding="{TemplateBinding Padding}" Background="Transparent"><ContentPresenter/></Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource InfoBackground}"/></Trigger>
+                <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Selection}"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="MinHeight" Value="38"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocus}"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
+            <Grid>
+                <ToggleButton x:Name="Toggle" Style="{StaticResource ComboToggle}" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <ContentPresenter x:Name="Selected" IsHitTestVisible="False" Margin="12,0,34,0" VerticalAlignment="Center"
+                                  Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+                <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                    <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                            Margin="0,2,0,0" CornerRadius="4" BorderThickness="1" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource Link}">
+                        <ScrollViewer><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+                    </Border>
+                </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.6"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style TargetType="GroupBox">
         <Setter Property="Padding" Value="20"/><Setter Property="Margin" Value="0,0,0,16"/>
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>

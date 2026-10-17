@@ -86,6 +86,7 @@ public partial class MainWindow : Window
             catch (Exception ex) { ShowProjectError(ex.Message); return null; }
         };
         _viewModel.ShowProjectError = ShowProjectError;
+        _viewModel.GlmApiKeyInputCleared += () => GlmApiKeyBox.Clear();
         _viewModel.ShowAuthenticationPrompt = message =>
         {
             if (!IsVisible) return;
@@ -152,6 +153,34 @@ public partial class MainWindow : Window
         if (_viewModel.IsRunning) return;
         var dialog = new OpenFileDialog { Title = "Javaの実行ファイル", Filter = "Java|java.exe" };
         if (dialog.ShowDialog(this) == true) { _viewModel.Project.DiagnosticTools.JavaPath = dialog.FileName; _viewModel.RefreshSaveState(); DataContext = null; DataContext = _viewModel; }
+    }
+    private void ChooseAppZapJar_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsRunning) return;
+        var dialog = new OpenFileDialog { Title = "アプリ設定のZAP JARファイル", Filter = "ZAP JAR|zap*.jar" };
+        if (dialog.ShowDialog(this) == true) { _viewModel.AppSettings.ZapJarPath = dialog.FileName; DataContext = null; DataContext = _viewModel; }
+    }
+    private void ChooseAppJava_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsRunning) return;
+        var dialog = new OpenFileDialog { Title = "アプリ設定のJavaの実行ファイル", Filter = "Java|java.exe" };
+        if (dialog.ShowDialog(this) == true) { _viewModel.AppSettings.JavaPath = dialog.FileName; DataContext = null; DataContext = _viewModel; }
+    }
+    private void ChooseAppBurpJar_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsRunning) return;
+        var dialog = new OpenFileDialog { Title = "Burp MCPプロキシのJARファイル", Filter = "JAR|*.jar" };
+        if (dialog.ShowDialog(this) == true) { _viewModel.AppSettings.BurpMcpProxyJarPath = dialog.FileName; DataContext = null; DataContext = _viewModel; }
+    }
+    // PasswordBoxはバインドできないため、入力中のキーをコードビハインドからViewModelへ渡す。
+    private void GlmApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e) =>
+        _viewModel.GlmApiKeyInput = GlmApiKeyBox.Password;
+    private void ResetAppSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsRunning) return;
+        _viewModel.ResetAppSettings();
+        DataContext = null;
+        DataContext = _viewModel;
     }
     private async void ImportZapReport_Click(object sender, RoutedEventArgs e)
     {

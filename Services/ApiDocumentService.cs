@@ -15,7 +15,8 @@ public sealed class ApiDocumentService
     public static async Task<ApiDocumentSettings> ReadDocumentAsync(string path, ApiDocumentSettings current)
     {
         var content = await TextDocumentReader.ReadAsync(path);
-        return new() { FileName = Path.GetFileName(path), Content = content, BaseUrl = current.BaseUrl, Provider = current.Provider };
+        return new() { FileName = Path.GetFileName(path), Content = content, BaseUrl = current.BaseUrl,
+            Provider = current.Provider, Model = current.Model, ReasoningLevel = current.ReasoningLevel };
     }
 
     public static void Validate(EngagementProject project)
@@ -39,6 +40,8 @@ public sealed class ApiDocumentService
         {
             project.Id, project.Name, mode = "api-document", runStartedAt = DateTimeOffset.Now,
             activeRole = project.ActiveRole, provider = project.ApiDocument.Provider.ToString(),
+            model = DocumentAiCatalog.NormalizeModel(project.ApiDocument.Provider, project.ApiDocument.Model),
+            reasoningLevel = project.ApiDocument.ReasoningLevel.ToString(),
             baseUrl = project.ApiDocument.BaseUrl, allowedOrigins = project.AllowedOrigins,
             documentName = project.ApiDocument.FileName, maxRequests = project.MaxRequests
         }, new JsonSerializerOptions { WriteIndented = true }));

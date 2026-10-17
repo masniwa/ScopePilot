@@ -36,6 +36,21 @@ public static class ZapActiveScanProfile
         ? Thresholds.First(x => x.Equals(value, StringComparison.OrdinalIgnoreCase)) : DefaultThreshold;
     public static int NormalizeTargets(int value) => Math.Clamp(value is 0 ? DefaultMaxTargets : value, 1, MaxTargetsLimit);
 }
+
+// アクティブ診断ジョブごとの実行制御。変更すると診断の所要時間・要求量・検出範囲が変わるため、
+// 計画生成・再生成検査・承認証跡の3箇所で必ず同じ値を使う。
+public sealed record ZapScanTuning(
+    int MaxRuleDurationInMins, int MaxAlertsPerRule, int DelayInMs, int ThreadPerHost,
+    bool ScanHeadersAllRequests, bool AddQueryParam)
+{
+    public static ZapScanTuning Defaults { get; } = new(1, 10, 100, 1, false, false);
+    public static int NormalizeRuleDuration(int value) => Math.Clamp(value is 0 ? 1 : value, 1, 10);
+    public static int NormalizeAlertsPerRule(int value) => Math.Clamp(value is 0 ? 10 : value, 1, 100);
+    public static int NormalizeDelay(int value) => Math.Clamp(value, 0, 1000);
+    public static int NormalizeThreads(int value) => Math.Clamp(value is 0 ? 1 : value, 1, 4);
+    public ZapScanTuning Normalized() => new(NormalizeRuleDuration(MaxRuleDurationInMins), NormalizeAlertsPerRule(MaxAlertsPerRule),
+        NormalizeDelay(DelayInMs), NormalizeThreads(ThreadPerHost), ScanHeadersAllRequests, AddQueryParam);
+}
 public sealed class DiagnosticObservation
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

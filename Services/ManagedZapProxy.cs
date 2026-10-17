@@ -23,9 +23,11 @@ public sealed class ManagedZapProxy : IAsyncDisposable
 
     public static ProcessStartInfo CreateStartInfo(DiagnosticToolSettings tools, string directory, int port, string key)
     {
+        // 案件側で空欄のときはアプリ設定（%APPDATA%）の既定パスを使う。
+        AppSettingsService.ApplyZapToolDefaults(tools);
         if (!File.Exists(tools.ZapJarPath) || !Path.GetExtension(tools.ZapJarPath).Equals(".jar", StringComparison.OrdinalIgnoreCase) ||
             !File.Exists(tools.JavaPath) || !Path.GetFileName(tools.JavaPath).Equals("java.exe", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("案件設定でZAPのJARとJavaのjava.exeを指定してください。");
+            throw new InvalidOperationException("ZAPのJARとJavaのjava.exeを指定してください（案件設定またはアプリ設定）。");
         var home = Path.Combine(directory, "zap-proxy-home");
         Directory.CreateDirectory(home);
         var start = new ProcessStartInfo(tools.JavaPath)

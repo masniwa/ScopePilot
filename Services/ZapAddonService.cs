@@ -31,6 +31,8 @@ public sealed class ZapAddonService
     public async Task<ZapEnvironmentSnapshot> PrepareAsync(EngagementProject project, string directory, string home,
         IProgress<string>? progress, CancellationToken token, bool includeActiveScan = false)
     {
+        // 案件側で空欄のときはアプリ設定（%APPDATA%）の既定パスを使う。
+        AppSettingsService.ApplyZapToolDefaults(project.DiagnosticTools);
         ValidateTools(project.DiagnosticTools);
         ProjectPaths.EnsureChild(ProjectPaths.Root(project), directory);
         ProjectPaths.EnsureChild(directory, home);

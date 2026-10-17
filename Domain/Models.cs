@@ -26,6 +26,8 @@ public sealed class EngagementProject
     public ObservableCollection<BrunoVerification> BrunoVerifications { get; set; } = [];
     public InputMode Mode { get; set; } = InputMode.WebExploration;
     public ExplorationDocumentSettings ExplorationDocument { get; set; } = new();
+    // 画面探索（Playwright MCPでの機能理解）に使うAI。既定はCodex CLI。
+    public ExplorationAiSettings ExplorationAi { get; set; } = new();
     public ExplorationProxySettings ExplorationProxy { get; set; } = new();
     public ApiDocumentSettings ApiDocument { get; set; } = new();
     public ObservableCollection<ApiRequestDraft> ApiRequests { get; set; } = [];

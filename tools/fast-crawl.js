@@ -222,6 +222,10 @@ async function main() {
     });
     page = context.pages()[0] || await context.newPage();
     enqueue(startUrl); await discoverSitemaps();
+    // Document-derived crawl targets: the app already filtered them to allowed
+    // origins; enqueue() re-applies origin/policy/limit checks like any link.
+    for (const target of (engagement.documentHints && engagement.documentHints.crawlTargets) || [])
+      enqueue(target, 'document-hint', '文書記載エンドポイント');
     while (queue.length && pages.length < maxPages && requestCount < maxRequests && Date.now() < deadline && !closeRequested) {
       const item = queue.shift(), k = key(item.url, item.role);
       if (visited.has(k)) continue;

@@ -26,6 +26,7 @@ public sealed class AiInputBuilder
             ? await _importer.ImportAsync(requestFile)
             : Array.Empty<ObservedRequest>();
         var (adoptedPatterns, deferredPatterns, guidelines, startUrl, activeRole) = await ReadRunSettingsAsync(Path.Combine(runDirectory, "engagement.json"));
+        var hints = await ReadDocumentHintsAsync(Path.Combine(runDirectory, DocumentHintService.RunFileName));
 
         var selectedRequests = new List<(ObservedRequest Request, SelectionAssessment Assessment, bool PreviouslyAdopted)>();
         var staticExcluded = 0;
@@ -63,6 +64,8 @@ public sealed class AiInputBuilder
             .Select(group =>
             {
                 var first = group.First();
+                // 文書由来の優先規則（個人情報・決済等）と高危先エンドポイントを代表URLへ適用する。
+                var documentPriority = DocumentPriority(hints, first.Request.Url, out var documentPriorityReason);
                 return new
                 {
                     pattern = group.Key,
@@ -73,12 +76,16 @@ public sealed class AiInputBuilder
                     contentTypes = group.Select(x => BaseContentType(x.Request.ContentType)).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Take(5).ToArray(),
                     roles = group.Select(x => ObservedRequestIdentity.NormalizeRole(x.Request.Role)).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray(),
                     category = first.Assessment.Category,
-                    reasons = group.SelectMany(x => x.Assessment.Signals).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    reasons = group.SelectMany(x => x.Assessment.Signals).Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Concat(documentPriorityReason is null ? Array.Empty<string>() : new[] { documentPriorityReason }).ToArray(),
                     guidelineBasis = group.SelectMany(x => x.Assessment.References).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
-                    selectionSource = group.Any(x => x.PreviouslyAdopted) ? "previously-adopted" : "new-discovery"
+                    selectionSource = group.Any(x => x.PreviouslyAdopted) ? "previously-adopted" : "new-discovery",
+                    documentPriority,
+                    documentParameters = DocumentParameters(hints, first.Request.Url)
                 };
             })
             .OrderByDescending(x => x.method != "GET")
+            .ThenByDescending(x => x.documentPriority == "high")
             .ThenByDescending(x => CategoryPriority(x.category))
             .ThenByDescending(x => x.occurrences)
             .ThenBy(x => x.pattern, StringComparer.OrdinalIgnoreCase)
@@ -124,12 +131,30 @@ public sealed class AiInputBuilder
         var authenticationPages = await ReadAuthenticationPagesAsync(Path.Combine(runDirectory, "crawl-pages.jsonl"));
         var truncated = Math.Max(0, requestGroups.Length - keptRequests.Length) + Math.Max(0, formGroups.Length - keptForms.Length);
         var hasReferenceDocument = File.Exists(Path.Combine(runDirectory, ExplorationDocumentService.RunFileName));
+        var observedPaths = requests
+            .Select(x => UrlPath(x.Url)).Where(x => x.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var output = new
         {
             generatedAt = DateTimeOffset.Now,
             targetRole = activeRole,
             authenticationPages,
             referenceDocumentFile = hasReferenceDocument ? ExplorationDocumentService.RunFileName : null,
+            // 文書由来の補助情報。観測事実ではなく、出典と合わせて扱う。
+            documentHints = hints is null ? null : new
+            {
+                status = hints.Status,
+                summary = hints.Summary,
+                priorityRules = hints.PriorityRules,
+                apiVariations = hints.ApiVariations,
+                notes = hints.Notes,
+                limitations = hints.Limitations,
+                endpoints = hints.Endpoints.Select(e => new
+                {
+                    e.Url, e.Kind, e.Priority, e.Reason, e.SourceReference,
+                    observed = observedPaths.Contains(UrlPath(e.Url))
+                }).ToArray()
+            },
             policy = new
             {
                 description = "前回採用済みと新規発見パターンを収録し、除外キャッシュを省いています。観測可能な選定規則による一次分類であり、除外は安全性の証明ではありません。",
@@ -178,6 +203,59 @@ public sealed class AiInputBuilder
         "検索・入力" or "入力パラメーター" => 4,
         _ => 1
     };
+
+    private static async Task<DocumentHints?> ReadDocumentHintsAsync(string path)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            await using var stream = File.OpenRead(path);
+            return await System.Text.Json.JsonSerializer.DeserializeAsync<DocumentHints>(stream,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
+    }
+
+    // 文書の優先規則・高危先エンドポイントに該当するURLを高優先とする。
+    private static string DocumentPriority(DocumentHints? hints, string url, out string? reason)
+    {
+        reason = null;
+        if (hints is null) return "normal";
+        foreach (var rule in hints.PriorityRules.Where(x => x.Priority == "high"))
+            if (rule.Keywords.Any(keyword => !string.IsNullOrWhiteSpace(keyword) && url.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            {
+                reason = $"文書優先(高): {rule.Category}";
+                return "high";
+            }
+        var path = UrlPath(url);
+        if (path.Length > 0 && hints.Endpoints.Any(x => x.Priority == "high" && UrlPath(x.Url) == path))
+        {
+            reason = "文書優先(高): 文書記載の高危先エンドポイント";
+            return "high";
+        }
+        return "normal";
+    }
+
+    // 文書のAPIパラメーター記録を、代表URLのパスが一致する場合に添付する。
+    private static object? DocumentParameters(DocumentHints? hints, string url)
+    {
+        if (hints is null || hints.ApiVariations.Length == 0) return null;
+        var path = UrlPath(url);
+        if (path.Length == 0) return null;
+        var match = hints.ApiVariations.FirstOrDefault(v =>
+        {
+            var endpoint = UrlPath(v.Endpoint);
+            return endpoint.Length > 0 && (endpoint == path || endpoint.TrimEnd('/') == path.TrimEnd('/'));
+        });
+        return match is null ? null : new { match.Endpoint, match.Parameters, match.SourceReference };
+    }
+
+    private static string UrlPath(string value)
+    {
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+            return uri.AbsolutePath;
+        return value.StartsWith('/') ? value : string.Empty;
+    }
 
     private static async Task<object[]> ReadAuthenticationPagesAsync(string path)
     {

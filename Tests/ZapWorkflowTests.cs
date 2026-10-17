@@ -131,6 +131,42 @@ public sealed class ZapWorkflowTests
     }
 
     [Fact]
+    public async Task ScanTuningPropagatesToPlanAndAuthorization()
+    {
+        using var temp = new TestFolder();
+        var project = await CapturedProject(temp);
+        project.DiagnosticTools.EnableZapActiveScan = true;
+        project.DiagnosticTools.ZapJarPath = Path.Combine(temp.Path, "zap.jar");
+        project.DiagnosticTools.JavaPath = Path.Combine(temp.Path, "java.exe");
+        await File.WriteAllTextAsync(project.DiagnosticTools.ZapJarPath, "test stub");
+        await File.WriteAllTextAsync(project.DiagnosticTools.JavaPath, "test stub");
+        var tuning = new ZapScanTuning(5, 50, 250, 2, ScanHeadersAllRequests: true, AddQueryParam: true);
+        var package = await new ZapHandoffService().BuildAsync(project, tuning);
+        var plan = await File.ReadAllTextAsync(package.PlanPath);
+        Assert.Contains("maxRuleDurationInMins: 5", plan);
+        Assert.Contains("maxAlertsPerRule: 50", plan);
+        Assert.Contains("delayInMs: 250", plan);
+        Assert.Contains("threadPerHost: 2", plan);
+        Assert.Contains("scanHeadersAllRequests: true", plan);
+        Assert.Contains("addQueryParam: true", plan);
+        var runner = new ZapCliRunner(async (_, p, _, action, _, _, _) =>
+        {
+            if (action == "-autorun")
+                await File.WriteAllTextAsync(Path.Combine(p.Directory, "reports", "zap-report.json"), "{\"site\":[]}");
+            return 0;
+        });
+        var result = await runner.RunAsync(project, package, null, CancellationToken.None, activeScanAcknowledged: true, tuning);
+        Assert.Equal("completed", result.Status);
+        var authorization = await File.ReadAllTextAsync(Path.Combine(package.Directory, "zap-active-authorization.json"));
+        Assert.Contains("\"maxRuleDurationInMins\": 5", authorization);
+        Assert.Contains("\"delayInMs\": 250", authorization);
+        Assert.Contains("\"threadPerHost\": 2", authorization);
+        // 範囲外の値は正規化される。
+        var clamped = new ZapScanTuning(99, 0, -5, 9, false, false).Normalized();
+        Assert.Equal(new ZapScanTuning(10, 10, 0, 4, false, false), clamped);
+    }
+
+    [Fact]
     public async Task MaxTargetsIsConfigurableAndStillEnforced()
     {
         using var temp = new TestFolder();

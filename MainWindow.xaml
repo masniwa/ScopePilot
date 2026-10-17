@@ -66,6 +66,7 @@
                     <ListBoxItem Tag="4" Content="診断所見" />
                     <ListBoxItem Tag="5" Content="実行履歴" />
                     <ListBoxItem Tag="7" Content="データ管理" />
+                    <ListBoxItem Tag="9" Content="アプリ設定" />
                 </ListBox>
             </DockPanel>
         </Border>
@@ -116,7 +117,7 @@
                                 <GroupBox Header="基本情報" Margin="0,0,0,16" IsEnabled="{Binding CanEditExplorationSettings}">
                                     <StackPanel>
                                         <TextBlock Text="入力モード" />
-                                        <ListBox SelectedIndex="{Binding ProjectModeIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="100" Margin="0,4,0,12" AutomationProperties.Name="入力モード">
+                                        <ListBox Style="{StaticResource ChoiceList}" SelectedIndex="{Binding ProjectModeIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="入力モード">
                                             <ListBoxItem Content="Web探索（クローリング）" />
                                             <ListBoxItem Content="APIドキュメント（リクエスト生成）" />
                                         </ListBox>
@@ -138,21 +139,40 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </GroupBox>
+                                <GroupBox x:Name="ExplorationAiSection" Header="画面探索のAI" Margin="0,0,0,16" Style="{StaticResource WebGroupBox}" IsEnabled="{Binding CanEditExplorationSettings}">
+                                    <StackPanel>
+                                        <ListBox Style="{StaticResource ChoiceList}" SelectedIndex="{Binding ExplorationAiIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="画面探索のAI">
+                                            <ListBoxItem Content="Codex CLI" /><ListBoxItem Content="GLM（Z.ai・zcode）" />
+                                        </ListBox>
+                                        <TextBlock Text="モデル" />
+                                        <ComboBox ItemsSource="{Binding ExplorationAiModelOptions}" SelectedItem="{Binding ExplorationAiModelLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" IsEnabled="{Binding ExplorationAiModelEnabled}" Margin="0,4,0,8" AutomationProperties.Name="画面探索のAIモデル" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="リンク巡回の後、このAIがPlaywright MCPで探索ブラウザを操作し、代表パターンの機能を確認します。どちらのAIでも、使えるブラウザ操作は閲覧・スナップショット・画面遷移・通信一覧・スクリーンショットに限られ、シェル・ファイル操作・Web取得は使えません。GLMはzcode CLI（アプリ設定のAPIキー、またはzcode login のサインイン）で実行し、許可外のMCPツールはアプリのフィルターで遮断します。GLMは途中経過を出力しないため、結果は終了時に表示されます。" />
+                                    </StackPanel>
+                                </GroupBox>
                                 <GroupBox x:Name="ExplorationDocumentSection" Header="入力ドキュメント（仕様書・操作手順）" Margin="0,0,0,16" Style="{StaticResource WebGroupBox}">
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource Hint}" Text="対象の仕様書・操作手順をCodexの機能理解に使用します。Markdown・TXT・HTML・JSON・YAMLのUTF-8文書（最大250,000文字）を選択できます。PDF・Wordはテキストへ変換してください。" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="対象の仕様書・操作手順を選択したAIの機能理解に使用します。Markdown・TXT・HTML・JSON・YAMLのUTF-8文書（最大250,000文字）を選択できます。PDF・Wordはテキストへ変換してください。" />
                                         <TextBlock x:Name="ExplorationDocumentLabel" Text="{Binding ExplorationDocumentName}" TextWrapping="Wrap" Margin="0,4,0,8" />
                                         <WrapPanel>
                                             <Button x:Name="ReadExplorationDocumentButton" Content="ドキュメントを選択" Click="ReadExplorationDocument_Click" Height="38" Margin="0,0,8,0" AutomationProperties.Name="クローリング用の入力ドキュメントを選択" />
                                             <Button Content="指定を解除" Command="{Binding ClearExplorationDocumentCommand}" Height="38" Margin="0" />
                                         </WrapPanel>
+                                        <TextBlock Text="文書を読み取るAI" Margin="0,8,0,0" />
+                                        <ListBox Style="{StaticResource ChoiceList}" SelectedIndex="{Binding DocProviderIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="探索用ドキュメントのAI">
+                                            <ListBoxItem Content="Codex CLI" /><ListBoxItem Content="Claude Code CLI" /><ListBoxItem Content="GLM（Z.ai・zcode）" />
+                                        </ListBox>
+                                        <TextBlock Text="モデル" />
+                                        <ComboBox ItemsSource="{Binding DocModelOptions}" SelectedItem="{Binding DocModelLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Margin="0,4,0,8" AutomationProperties.Name="探索用ドキュメントのAIモデル" />
+                                        <TextBlock Text="推論レベル" />
+                                        <ComboBox ItemsSource="{Binding DocReasoningOptions}" SelectedIndex="{Binding DocReasoningIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" IsEnabled="{Binding DocReasoningEnabled}" Margin="0,4,0,8" AutomationProperties.Name="探索用ドキュメントのAI推論レベル" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="このAIが文書から探索の補助情報（クローリングでは辿り着かないAPI・管理ページ、認証情報の所在、優先規則、APIパラメーターのバリエーション）を抽出します。Codex CLIとClaude Code CLIはインストールとログインが必要です。GLMはzcode CLI（npmグローバル）を使用し、アプリ設定のAPIキー、またはzcode login のZ.aiサインインで実行します。推論レベルはzcode側の設定に従います。抽出に失敗しても探索は続行します。" />
                                         <TextBlock Style="{StaticResource Hint}" Text="文書はプロジェクトフォルダーへコピーし、探索時にAIへ渡します。選択・解除した設定は［保存］で保存してください。" Margin="0,8,0,0" />
                                     </StackPanel>
                                 </GroupBox>
                                 <GroupBox x:Name="ExplorationProxySection" Header="探索用プロキシ" Margin="0,0,0,16" Style="{StaticResource WebGroupBox}" IsEnabled="{Binding CanEditExplorationSettings}">
                                     <StackPanel>
                                         <TextBlock Style="{StaticResource Hint}" Text="自動ではBurpへの接続を確認し、接続できない場合はZAPを起動します。探索後の引き渡し先は［診断ツールへ］で別に指定できます。" />
-                                        <ListBox SelectedIndex="{Binding ExplorationProxyModeIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="136" Margin="0,4,0,12" AutomationProperties.Name="探索用プロキシ">
+                                        <ListBox Style="{StaticResource ChoiceList}" SelectedIndex="{Binding ExplorationProxyModeIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="探索用プロキシ">
                                             <ListBoxItem Content="自動（Burpを優先、接続不可ならZAP）" />
                                             <ListBoxItem Content="Burp" />
                                             <ListBoxItem Content="ZAP" />
@@ -173,7 +193,7 @@
                                             <TextBox Text="{Binding Project.DiagnosticTools.JavaPath, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="38" Margin="0,0,8,0" AutomationProperties.Name="探索用ZAPのJava" />
                                             <Button Grid.Column="1" Content="Javaを選択" Click="ChooseJava_Click" Height="38" MinWidth="96" Margin="0" />
                                         </Grid>
-                                        <TextBlock Style="{StaticResource Hint}" Text="ZAPと対応するJavaを別途導入して指定してください。この実行ファイル設定は引き渡し画面でも使用します。ZAPは探索ごとにSafeモードで起動し、終了時に停止します。設定は［保存］で保存してください。" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="ZAPと対応するJavaを別途導入して指定します。ここを空欄にするとアプリ設定（アプリ設定画面）の既定パスを使用します。この実行ファイル設定は引き渡し画面でも使用します。ZAPは探索ごとにSafeモードで起動し、終了時に停止します。設定は［保存］で保存してください。" />
                                     </StackPanel>
                                 </GroupBox>
                                 <GroupBox Header="APIドキュメント" Margin="0,0,0,16" Style="{StaticResource ApiGroupBox}">
@@ -186,21 +206,54 @@
                                         <TextBlock Text="APIベースURL（例: https://api.example.com/v1）" />
                                         <TextBox Text="{Binding Project.ApiDocument.BaseUrl, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="APIベースURL" />
                                         <TextBlock Text="文書を読み取るAI" />
-                                        <ListBox SelectedIndex="{Binding ApiProviderIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="100" Margin="0,4,0,8" AutomationProperties.Name="APIドキュメントのAI">
-                                            <ListBoxItem Content="Codex CLI" /><ListBoxItem Content="Claude Code CLI" />
+                                        <ListBox Style="{StaticResource ChoiceList}" SelectedIndex="{Binding ApiProviderIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="APIドキュメントのAI">
+                                            <ListBoxItem Content="Codex CLI" /><ListBoxItem Content="Claude Code CLI" /><ListBoxItem Content="GLM（Z.ai・zcode）" />
                                         </ListBox>
-                                        <TextBlock Style="{StaticResource Hint}" Text="CLIのインストールとログインが必要です。生成件数には通信上限、生成時間には実行時間上限を使用します。生成し直すと下書き一覧が置き換わります。" />
+                                        <TextBlock Text="モデル" />
+                                        <ComboBox ItemsSource="{Binding ApiModelOptions}" SelectedItem="{Binding ApiModelLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Margin="0,4,0,8" AutomationProperties.Name="APIドキュメントのAIモデル" />
+                                        <TextBlock Text="推論レベル" />
+                                        <ComboBox ItemsSource="{Binding ApiReasoningOptions}" SelectedIndex="{Binding ApiReasoningIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" IsEnabled="{Binding ApiReasoningEnabled}" Margin="0,4,0,8" AutomationProperties.Name="APIドキュメントのAI推論レベル" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="Codex CLIとClaude Code CLIはインストールとログインが必要です。GLMはzcode CLI（npmグローバル）を使用し、アプリ設定のAPIキー、またはzcode login のZ.aiサインインで実行します。推論レベルはzcode側の設定に従うため選択できません。推論レベルはモデルの思考量（Highest/High/Middle/Low）です。生成件数には通信上限、生成時間には実行時間上限を使用します。生成し直すと下書き一覧が置き換わります。" />
                                     </StackPanel>
                                 </GroupBox>
                                 <GroupBox Header="アカウントと操作制限" Margin="0,0,0,16" IsEnabled="{Binding CanEditExplorationSettings}">
                                     <StackPanel>
-                                        <TextBlock Text="認証ロール（1行1件）" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="探索で扱う利用者の区分（ロール）と、自動では実行させない操作を決めます。アプリは自動ログインをしません。ログイン画面を見つけたら探索を止めて、あなたに探索ブラウザでのログインを依頼します。パスワードなどの認証情報はこの画面に書かないでください。" />
+
+                                        <TextBlock Text="認証ロール（1行1件）" FontWeight="SemiBold" />
                                         <TextBox Text="{Binding Project.Roles, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="70" AcceptsReturn="True" TextChanged="RolesTextBox_TextChanged" AutomationProperties.Name="認証ロール" />
-                                        <TextBlock Text="今回探索するロール" Margin="0,8,0,0" />
-                                        <ListBox ItemsSource="{Binding RoleOptions}" SelectedItem="{Binding Project.ActiveRole, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="64" />
-                                        <TextBlock Text="{Binding RoleHelpText}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" Margin="0,3,0,8" />
-                                        <TextBlock Text="自動実行しない操作（1行1件）" />
+                                        <Border Background="{DynamicResource InfoBackground}" BorderBrush="{DynamicResource InfoBorder}" BorderThickness="1" CornerRadius="4" Padding="12,10" Margin="0,-8,0,16">
+                                            <StackPanel>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="記入するもの：" FontWeight="SemiBold" /><Run Text="対象アプリの利用者区分の名前（例：一般ユーザー、管理者）。改行またはカンマで区切ります。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="判断のしかた：" FontWeight="SemiBold" /><Run Text="書いた名前がそのまま下の「今回探索するロール」とログイン待ちの「認証後のロール」の選択肢になります。重複は1つにまとめ、「未認証」は書かなくても先頭に必ず追加します。名前は記録用のラベルで、アプリが権限を確かめることはありません。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap"><Run Text="結果：" FontWeight="SemiBold" /><Run Text="観測した通信・候補・所見に、どのロールで得たかのラベルとして付きます。同じURLでもロールが違えば別の記録として巡回・保存します。" /></TextBlock>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <TextBlock Text="今回探索するロール" FontWeight="SemiBold" />
+                                        <ListBox Style="{StaticResource ChoiceList}" ItemsSource="{Binding RoleOptions}" SelectedItem="{Binding ActiveRole, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" AutomationProperties.Name="今回探索するロール" />
+                                        <Border Background="{DynamicResource InfoBackground}" BorderBrush="{DynamicResource InfoBorder}" BorderThickness="1" CornerRadius="4" Padding="12,10" Margin="0,0,0,16" Style="{StaticResource WebOnly}">
+                                            <StackPanel>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="選ぶもの：" FontWeight="SemiBold" /><Run Text="この実行で、ログイン後に扱いたい利用者区分。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="判断のしかた：" FontWeight="SemiBold" /><Run Text="リンク巡回は選択に関係なく、常に「未認証」として始めます。ログイン画面（URL・ページタイトル・パスワード欄から判定）を見つけたら、選んだロールに関係なく巡回を止めて、探索ブラウザでのログインを依頼します。ログイン後、アプリでロールを選んで再開すると、ログアウトのリンクなどログイン状態の表示があることを確かめてから続行します。確かめられないときは、再度ログインを依頼します。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="この選択の効き方：" FontWeight="SemiBold" /><Run Text="未認証以外を選ぶと、ログイン待ちで表示する「認証後のロール」の初期値になります。実際の記録に使われるのは、再開時に選んだロールです。ログイン前の通信は「未認証」、ログイン後の通信はそのロールとして記録します。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap"><Run Text="結果：" FontWeight="SemiBold" /><Run Text="実行記録（engagement.json）、AIへの指示、保存する証跡ファイル（HARなど）のラベル、診断ツールへの引き渡しに、このロールを使います。個々の通信のロールは上の判断で付き、ログインが一度も必要にならなかった場合はすべて「未認証」です（巡回記録と照合できない通信は「認証状態未確認」）。" /></TextBlock>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource InfoBackground}" BorderBrush="{DynamicResource InfoBorder}" BorderThickness="1" CornerRadius="4" Padding="12,10" Margin="0,0,0,16" Style="{StaticResource ApiOnly}">
+                                            <TextBlock TextWrapping="Wrap"><Run Text="APIドキュメントモード：" FontWeight="SemiBold" /><Run Text="選んだロールを、生成するリクエストの下書きとAIへの指示に記録します。ログインの代行や認証情報の補完は行いません。トークンなどの値は、下書きの置換値で確認・補完してください。" /></TextBlock>
+                                        </Border>
+
+                                        <TextBlock Text="自動実行しない操作（1行1件）" FontWeight="SemiBold" />
                                         <TextBox Text="{Binding Project.ForbiddenActions, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="120" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="自動実行しない操作" />
+                                        <Border Background="{DynamicResource InfoBackground}" BorderBrush="{DynamicResource InfoBorder}" BorderThickness="1" CornerRadius="4" Padding="12,10" Margin="0,-8,0,0">
+                                            <StackPanel>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="記入するもの：" FontWeight="SemiBold" /><Run Text="自動では実行させたくない操作を表す語句（例：削除、購入・決済）。画面上のリンクやボタンに表示される言葉で書きます。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="判断のしかた：" FontWeight="SemiBold" /><Run Text="リンク巡回で見つけたリンクの表示文字に、この語句が含まれるか（部分一致・英字の大文字小文字は区別しない）で判定します。URLとは照合しません。これとは別に、ログアウト・削除・購入・決済・申請・承認・リセットなどは、URLと表示文字の組み込みルールで常に除外します。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="結果：" FontWeight="SemiBold" /><Run Text="該当するリンクは辿らず、巡回記録（crawl-coverage.json）に「forbidden-action」として残します。画面探索のAIにも禁止事項として渡します（AIはクリック・入力・送信のツール自体を使えません）。報告書にも「自動実行しない操作」として載ります。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap"><Run Text="注意：" FontWeight="SemiBold" /><Run Text="「探索条件」でフォーム送信を有効にした場合、送信してよいかの判定にはこの語句を使いません。判定はURLの組み込みルールと、パスワード欄・ファイル欄の有無で行います。" /></TextBlock>
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
                                 </GroupBox>
                                 <GroupBox Header="探索条件" Margin="0,0,0,16" IsEnabled="{Binding CanEditExplorationSettings}">
@@ -319,7 +372,7 @@
                                         <StackPanel>
                                             <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding AuthenticationWaiting}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
                                             <TextBlock Text="認証後のロール" Margin="0,8,0,0" />
-                                            <ListBox x:Name="AuthenticationRoleSelector" ItemsSource="{Binding AuthenticationRoleOptions}" SelectedItem="{Binding AuthenticationRole, Mode=TwoWay}" MinWidth="180" Height="52" HorizontalAlignment="Left" AutomationProperties.Name="認証後のロール" />
+                                            <ListBox Style="{StaticResource ChoiceList}" x:Name="AuthenticationRoleSelector" ItemsSource="{Binding AuthenticationRoleOptions}" SelectedItem="{Binding AuthenticationRole, Mode=TwoWay}" MinWidth="180" HorizontalAlignment="Left" AutomationProperties.Name="認証後のロール" />
                                         </StackPanel>
                                 </StackPanel>
                             </DockPanel>
@@ -864,6 +917,121 @@
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
+                </TabItem>
+                <TabItem Header="アプリ設定" Tag="ZAP・Burpの実行環境と診断チューニングの既定値を、ユーザー単位で設定します。">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="0,0,8,0">
+                            <WrapPanel Margin="0,0,0,12">
+                                <Button Content="設定を保存" Command="{Binding SaveAppSettingsCommand}" Style="{StaticResource PrimaryActionButton}" AutomationProperties.Name="アプリ設定を保存" />
+                                <Button Content="既定値に戻す" Click="ResetAppSettings_Click" />
+                            </WrapPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="{Binding AppSettingsPath, StringFormat=設定ファイル: {0}}" TextWrapping="Wrap" Margin="0,0,0,16" />
+                            <GroupBox Header="ZAP実行環境（すべての案件で使用する既定）" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="ZAPのJAR（zap*.jar）" />
+                                    <Grid Margin="0,4,0,8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding AppSettings.ZapJarPath, UpdateSourceTrigger=PropertyChanged}" Height="38" Margin="0,0,8,0" AutomationProperties.Name="アプリ設定のZAP JAR" />
+                                        <Button Grid.Column="1" Content="JARを選択" Click="ChooseAppZapJar_Click" Height="38" MinWidth="96" Margin="0" />
+                                    </Grid>
+                                    <TextBlock Text="Javaのjava.exe" />
+                                    <Grid Margin="0,4,0,8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding AppSettings.JavaPath, UpdateSourceTrigger=PropertyChanged}" Height="38" Margin="0,0,8,0" AutomationProperties.Name="アプリ設定のJava" />
+                                        <Button Grid.Column="1" Content="Javaを選択" Click="ChooseAppJava_Click" Height="38" MinWidth="96" Margin="0" />
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource Hint}" Text="案件設定のZAP・Javaが空欄のときに、ここで指定したパスを使用します。既存の案件で既に指定済みの場合は案件側の指定が優先されます。" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox Header="ZAPアクティブ診断のチューニング" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <TextBlock Text="ルールごとの実行上限（分、1〜10）" TextWrapping="Wrap" />
+                                            <TextBlock Text="時間差系のルールは値を大きくすると検出しやすくなります（所要時間も増えます）" Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBox Grid.Column="1" Text="{Binding AppSettings.MaxRuleDurationInMins, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="ルールごとの実行上限" />
+                                    </Grid>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <TextBlock Text="ルールごとの警告上限（件、1〜100）" TextWrapping="Wrap" />
+                                            <TextBlock Text="同じルールの警告をここまで取り込みます" Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBox Grid.Column="1" Text="{Binding AppSettings.MaxAlertsPerRule, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="ルールごとの警告上限" />
+                                    </Grid>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <TextBlock Text="要求間隔（ミリ秒、0〜1000）" TextWrapping="Wrap" />
+                                            <TextBlock Text="対象への負荷を抑える間隔です" Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBox Grid.Column="1" Text="{Binding AppSettings.DelayInMs, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="診断要求の間隔" />
+                                    </Grid>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <TextBlock Text="ホストごとのスレッド数（1〜4）" TextWrapping="Wrap" />
+                                            <TextBlock Text="既定1。増やすと並行リクエストが増え、対象の負荷が上がります" Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBox Grid.Column="1" Text="{Binding AppSettings.ThreadPerHost, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="ホストごとのスレッド数" />
+                                    </Grid>
+                                    <CheckBox Content="すべての要求でヘッダーを診断対象にする（要求数が増えます）" IsChecked="{Binding AppSettings.ScanHeadersAllRequests, UpdateSourceTrigger=PropertyChanged}" Margin="0,12,0,4" AutomationProperties.Name="ヘッダー診断" />
+                                    <CheckBox Content="未観測のパラメーターを診断に追加する（要求数が増えます）" IsChecked="{Binding AppSettings.AddQueryParam, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" AutomationProperties.Name="未観測パラメーターの追加" />
+                                    <TextBlock Style="{StaticResource Hint}" Text="これらの値はZAP計画・実行前の再生成検査・承認証跡（zap-active-authorization.json）へ反映されます。値を変更した後に作成済みのパッケージを実行する場合は、パッケージを作り直してください。対象の許可範囲と負荷を確認して調整してください。" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox Header="Burp MCPプロキシ" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="mcp-proxy-all.jarの場所" />
+                                    <Grid Margin="0,4,0,8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding AppSettings.BurpMcpProxyJarPath, UpdateSourceTrigger=PropertyChanged}" Height="38" Margin="0,0,8,0" AutomationProperties.Name="Burp MCPプロキシのJAR" />
+                                        <Button Grid.Column="1" Content="JARを選択" Click="ChooseAppBurpJar_Click" Height="38" MinWidth="96" Margin="0" />
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource Hint}" Text="空欄の場合は、環境変数SCOPEPILOT_BURP_PROXY_JAR、次に既定位置（%LOCALAPPDATA%\ScopePilot\mcp\mcp-proxy-all.jar）の順に解決します。配布物には含まれません。" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox Header="AI連携（Codex・Claude・GLM）" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,4">
+                                        <Button DockPanel.Dock="Right" Content="すべて確認" Command="{Binding CheckAllAiConnectionsCommand}" Height="34" Margin="8,0,0,0" AutomationProperties.Name="すべてのAIの接続状況を確認" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="AIごとに接続状況を確認できます。いずれの確認もモデルへの生成要求（課金対象）は行いません。" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <Separator Margin="0,8" />
+                                    <DockPanel Margin="0,0,0,4">
+                                        <Button DockPanel.Dock="Right" Content="接続を確認" Command="{Binding CheckCodexConnectionCommand}" Height="34" Margin="8,0,0,0" AutomationProperties.Name="Codex CLIの接続状況を確認" />
+                                        <TextBlock Text="Codex CLI" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Style="{StaticResource Hint}" Text="codex login status でログイン状態を確認します。" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding CodexConnectionStatusText}" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondary}" AutomationProperties.Name="Codex CLIの確認結果" />
+                                    <Separator Margin="0,12" />
+                                    <DockPanel Margin="0,0,0,4">
+                                        <Button DockPanel.Dock="Right" Content="接続を確認" Command="{Binding CheckClaudeConnectionCommand}" Height="34" Margin="8,0,0,0" AutomationProperties.Name="Claude Code CLIの接続状況を確認" />
+                                        <TextBlock Text="Claude Code CLI" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Style="{StaticResource Hint}" Text="実行ファイル（%USERPROFILE%\.local\bin または %APPDATA%\npm）と認証情報を確認します。" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding ClaudeConnectionStatusText}" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondary}" AutomationProperties.Name="Claude Code CLIの確認結果" />
+                                    <Separator Margin="0,12" />
+                                    <DockPanel Margin="0,0,0,4">
+                                        <Button DockPanel.Dock="Right" Content="接続を確認" Command="{Binding CheckGlmConnectionCommand}" Height="34" Margin="8,0,0,0" AutomationProperties.Name="GLMの接続状況を確認" />
+                                        <TextBlock Text="GLM（Z.ai・zcode）" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Style="{StaticResource Hint}" Text="zcode CLI（%APPDATA%\npm）と、APIキーまたはZ.aiサインイン（zcode login）を確認します。" TextWrapping="Wrap" />
+                                    <TextBlock Text="Z.ai Coding PlanのAPIキー" Margin="0,8,0,0" />
+                                    <Grid Margin="0,4,0,4">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <PasswordBox x:Name="GlmApiKeyBox" PasswordChanged="GlmApiKeyBox_PasswordChanged" Height="38" Margin="0,0,8,0" VerticalContentAlignment="Center" AutomationProperties.Name="GLMのAPIキー" />
+                                        <Button Grid.Column="1" Content="登録を解除" Command="{Binding ClearGlmApiKeyCommand}" Height="38" MinWidth="96" Margin="0" AutomationProperties.Name="GLMのAPIキーの登録を解除" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding GlmApiKeyStatusText}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" AutomationProperties.Name="GLMのAPIキーの登録状態" />
+                                    <TextBlock Style="{StaticResource Hint}" Text="入力して［設定を保存］で登録します。キーはWindows DPAPI（ユーザー単位）で暗号化して設定ファイルへ保存し、画面・ログ・実行フォルダーには表示・保存しません。登録したキーは環境変数 ZAI_API_KEY（代替 Z_AI_API_KEY）より優先します。キーがない場合は zcode login のサインインで実行します。" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding GlmConnectionStatusText}" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondary}" AutomationProperties.Name="GLMの確認結果" />
+                                </StackPanel>
+                            </GroupBox>
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
             </TabControl>
         </Grid>

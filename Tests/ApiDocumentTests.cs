@@ -76,11 +76,15 @@ public sealed class ApiDocumentTests
         Assert.Equal(InputMode.WebExploration, JsonSerializer.Deserialize<EngagementProject>("{\"Name\":\"old\"}", options)!.Mode);
         var project = Project();
         project.ApiDocument.Provider = DocumentAiProvider.Claude;
+        project.ApiDocument.Model = "claude-opus-5-5";
+        project.ApiDocument.ReasoningLevel = AiReasoningLevel.Low;
         project.ApiRequests.Add(Assert.Single(ApiDocumentService.ParseResult(ResultJson(), project, "run").Requests));
         project.ApiRequests[0].Selected = true;
         var restored = JsonSerializer.Deserialize<EngagementProject>(JsonSerializer.Serialize(project, options), options)!;
         Assert.Equal(InputMode.ApiDocument, restored.Mode);
         Assert.Equal(DocumentAiProvider.Claude, restored.ApiDocument.Provider);
+        Assert.Equal("claude-opus-5-5", restored.ApiDocument.Model);
+        Assert.Equal(AiReasoningLevel.Low, restored.ApiDocument.ReasoningLevel);
         Assert.Equal(project.ApiDocument.Content, restored.ApiDocument.Content);
         Assert.Equal(project.ApiRequests[0].RawRequest, restored.ApiRequests[0].RawRequest);
         Assert.True(restored.ApiRequests[0].Selected);
@@ -114,12 +118,12 @@ public sealed class ApiDocumentTests
         Assert.True(model.IsApiMode);
         Assert.False(model.SetupMcpCommand.CanExecute(null));
         Assert.Equal("8", model.ReviewPageTag);
-        var codex = ApiDocumentAiRunner.CreateStartInfo("codex.exe", DocumentAiProvider.Codex, "run");
+        var codex = ApiDocumentAiRunner.CreateStartInfo(new CliLaunch("codex.exe", string.Empty), DocumentAiProvider.Codex, "run");
         Assert.True(codex.RedirectStandardInput);
         Assert.Contains("--ignore-user-config", codex.ArgumentList);
         Assert.Contains("read-only", codex.ArgumentList);
         Assert.Contains("--output-schema", codex.ArgumentList);
-        var claude = ApiDocumentAiRunner.CreateStartInfo("claude.exe", DocumentAiProvider.Claude, "run");
+        var claude = ApiDocumentAiRunner.CreateStartInfo(new CliLaunch("claude.exe", string.Empty), DocumentAiProvider.Claude, "run");
         Assert.True(claude.RedirectStandardInput);
         Assert.Contains("--json-schema", claude.ArgumentList);
         Assert.Contains("--strict-mcp-config", claude.ArgumentList);
@@ -129,6 +133,140 @@ public sealed class ApiDocumentTests
         var wrapped = JsonSerializer.Serialize(new { is_error = false, structured_output = JsonDocument.Parse(ResultJson()).RootElement });
         Assert.Single(ApiDocumentService.ParseResult(ApiDocumentAiRunner.ExtractClaudeResult(wrapped), Project(), "run").Requests);
         Assert.Throws<InvalidDataException>(() => ApiDocumentAiRunner.ExtractClaudeResult("{\"is_error\":true}"));
+    }
+
+    [Fact]
+    public void AiSelection_SupportsGlmCodexAndClaudeModelsWithReasoningLevels()
+    {
+        var model = new MainViewModel();
+        model.ProjectModeIndex = 1;
+        Assert.Equal(3, Enum.GetValues<DocumentAiProvider>().Length);
+        Assert.Equal(4, Enum.GetValues<AiReasoningLevel>().Length);
+        model.ApiProviderIndex = 2;
+        Assert.Equal(DocumentAiProvider.Glm, model.Project.ApiDocument.Provider);
+        Assert.Equal(new[] { "GLM-5.3", "GLM-5.3 flash" }, model.ApiModelOptions);
+        Assert.Equal("glm-5.3", model.Project.ApiDocument.Model);
+        model.ApiModelIndex = 1;
+        Assert.Equal("glm-5.3-flash", model.Project.ApiDocument.Model);
+        model.ApiReasoningIndex = 0;
+        Assert.Equal(AiReasoningLevel.Highest, model.Project.ApiDocument.ReasoningLevel);
+
+        var codex = ApiDocumentAiRunner.CreateStartInfo(new CliLaunch("codex.exe", string.Empty), DocumentAiProvider.Codex, "run", "gpt-6-luna", AiReasoningLevel.Highest);
+        Assert.Contains("--model", codex.ArgumentList);
+        Assert.Contains("gpt-6-luna", codex.ArgumentList);
+        Assert.Contains("model_reasoning_effort=\"xhigh\"", codex.ArgumentList);
+        var claude = ApiDocumentAiRunner.CreateStartInfo(new CliLaunch("claude.exe", string.Empty), DocumentAiProvider.Claude, "run", "claude-sonnet-5-5", AiReasoningLevel.Low);
+        Assert.Contains("claude-sonnet-5-5", claude.ArgumentList);
+        Assert.Equal("1024", claude.EnvironmentVariables["MAX_THINKING_TOKENS"]);
+
+        // カタログにないIDは各プロバイダーの既定モデルへ正規化する。
+        Assert.Equal("gpt-6.1-sol", DocumentAiCatalog.NormalizeModel(DocumentAiProvider.Codex, "unknown-model"));
+        Assert.Equal("medium", ApiDocumentAiRunner.CodexReasoningEffort(AiReasoningLevel.Middle));
+    }
+
+    [Fact]
+    public void GlmUsesZcodeCli_WithNpmScriptAttachedPromptAndIsolatedSettings()
+    {
+        // GLMはzcode（npm配布のスクリプトをnodeで起動）を使い、自身のZ.aiサインインで実行する。
+        var launch = new CliLaunch(@"C:\Program Files\nodejs\node.exe", @"C:\Users\x\AppData\Roaming\npm\node_modules\zcode-app-cli\bin\zcode.js");
+        var glm = ApiDocumentAiRunner.CreateStartInfo(launch, DocumentAiProvider.Glm, "run", model: null, reasoning: AiReasoningLevel.Middle);
+        var arguments = glm.ArgumentList.ToList();
+        Assert.Equal(launch.ScriptPath, arguments[0]);
+        Assert.Equal("-p", arguments[1]);
+        // zcodeにはスキーマ強制がないため、-p 指示へ最終応答のJSONスキーマを埋め込む。
+        Assert.Contains("JSONスキーマ", arguments[2]);
+        Assert.Contains("completed", arguments[2]);
+        Assert.EndsWith("prompt.md", arguments[arguments.IndexOf("--attach") + 1], StringComparison.Ordinal);
+        Assert.Equal("account:zai-individual-coding-plan/GLM-5.3", arguments[arguments.IndexOf("--model") + 1]);
+        Assert.Contains("--disallowed-tools", arguments);
+        Assert.Contains("--json", arguments);
+        Assert.Equal(Path.Combine("run", ApiDocumentAiRunner.ZcodeSettingsFileName), glm.EnvironmentVariables["ZCODE_CLI_SETTINGS_FILE"]);
+        Assert.False(glm.EnvironmentVariables.ContainsKey("ANTHROPIC_BASE_URL"));
+        Assert.False(glm.EnvironmentVariables.ContainsKey("MAX_THINKING_TOKENS"));
+
+        var flash = ApiDocumentAiRunner.CreateStartInfo(launch, DocumentAiProvider.Glm, "run", "glm-5.3-flash");
+        Assert.Equal("account:zai-individual-coding-plan/GLM-5.3-Flash", flash.ArgumentList.ToList()[flash.ArgumentList.ToList().IndexOf("--model") + 1]);
+        // ProcessStartInfoは現在プロセスの環境を複製するため、zcode自身が利用者環境へ
+        // ZCODE_PERSONAL_PROVIDER_CONFIG_FILEを設定しているマシンでは元の値が見える。
+        // 検証したいのは「ScopePilotがこの変数を追加しない」こと。
+        var ambientProviderConfig = Environment.GetEnvironmentVariable("ZCODE_PERSONAL_PROVIDER_CONFIG_FILE");
+        if (ambientProviderConfig is null)
+            Assert.False(flash.EnvironmentVariables.ContainsKey("ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"));
+        else
+            Assert.Equal(ambientProviderConfig, flash.EnvironmentVariables["ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"]);
+
+        // APIキー登録時は独立プロバイダー設定（Z.ai Coding Planテンプレート）を経由する。
+        var keyed = ApiDocumentAiRunner.CreateStartInfo(launch, DocumentAiProvider.Glm, "run", "glm-5.3-flash", zcodeProviderFile: @"C:\tmp\provider_config.json");
+        Assert.Equal("scopepilot-zai/GLM-5.3-Flash", keyed.ArgumentList.ToList()[keyed.ArgumentList.ToList().IndexOf("--model") + 1]);
+        Assert.Equal(@"C:\tmp\provider_config.json", keyed.EnvironmentVariables["ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"]);
+        using (var config = System.Text.Json.JsonDocument.Parse(ApiDocumentAiRunner.ZcodeApiKeyProviderConfig("id.secret", "glm-5.3")))
+        {
+            var rule = config.RootElement.GetProperty("config").GetProperty("providerConfigRules").GetProperty("providerRules")[0];
+            Assert.Equal("scopepilot-zai", rule.GetProperty("providerId").GetString());
+            Assert.Equal("zai-api", rule.GetProperty("templateId").GetString());
+            Assert.Equal("zhipu-coding-plan-api-key", rule.GetProperty("config").GetProperty("access").GetProperty("type").GetString());
+            Assert.Equal("id.secret", rule.GetProperty("config").GetProperty("access").GetProperty("apiKey").GetString());
+            Assert.Equal("GLM-5.3", config.RootElement.GetProperty("config").GetProperty("defaultModelSelection").GetProperty("modelId").GetString());
+        }
+        // 実行ログには認証方式だけを記録し、キーは含めない。
+        Assert.Contains("auth=api-key", ApiDocumentAiRunner.RunLogHeader(DocumentAiProvider.Glm, "glm-5.3", AiReasoningLevel.Middle, apiKey: true));
+        Assert.Contains("auth=zcode-login", ApiDocumentAiRunner.RunLogHeader(DocumentAiProvider.Glm, "glm-5.3", AiReasoningLevel.Middle));
+
+        // zcode -p --json の応答から最終応答(response)を取り出し、コードブロックで囲まれたJSONにも対応する。
+        const string stdout = "ZCode Built-in skipped (not-due)\n{\n  \"response\": \"```json\\n{\\\"status\\\":\\\"completed\\\"}\\n```\",\n  \"usage\": {}\n}\n";
+        Assert.Equal("{\"status\":\"completed\"}", ApiDocumentAiRunner.ExtractZcodeResult(stdout));
+        Assert.Equal("{\"a\":1}", ApiDocumentAiRunner.StripCodeFences("```\n{\"a\":1}\n```"));
+        Assert.Equal("{\"a\":1}", ApiDocumentAiRunner.StripCodeFences("{\"a\":1}"));
+        Assert.Throws<InvalidDataException>(() => ApiDocumentAiRunner.ExtractZcodeResult("JSONがない出力"));
+        Assert.Throws<InvalidDataException>(() => ApiDocumentAiRunner.ExtractZcodeResult("{\"other\":1}"));
+        Assert.Throws<InvalidDataException>(() => ApiDocumentAiRunner.ExtractZcodeResult("pre{\"response\": }post"));
+        // 推論レベルはzcodeへ渡せないため、表示でも付けない。
+        Assert.Equal(string.Empty, ApiDocumentAiRunner.ReasoningSuffix(DocumentAiProvider.Glm, AiReasoningLevel.High));
+        Assert.Equal("・推論High", ApiDocumentAiRunner.ReasoningSuffix(DocumentAiProvider.Claude, AiReasoningLevel.High));
+
+        var model = new ViewModels.MainViewModel();
+        Assert.True(model.ApiReasoningEnabled);
+        model.ApiProviderIndex = 2;
+        Assert.False(model.ApiReasoningEnabled);
+        model.DocProviderIndex = 2;
+        Assert.False(model.DocReasoningEnabled);
+        model.DocProviderIndex = 0;
+        Assert.True(model.DocReasoningEnabled);
+    }
+
+    [Fact]
+    public void ZcodeFailureSummary_ExplainsUsageLimitAuthAndKeyFormat()
+    {
+        // 実機ログ（Z.ai Coding Planの5時間上限超過・HTTP 429）の形式。
+        const string limit = "ZCode Built-in skipped (not-due)\nProviderBusinessError: [1308][Usage limit reached for 5 hour. Your limit will reset at 2026-10-13 01:26:35][20261012221006080546d126e44ef8]\n  code: 'PROVIDER_BUSINESS_ERROR',\nError: Turn execution failed (traceId: x)";
+        var summary = ApiDocumentAiRunner.ZcodeFailureSummary(limit);
+        Assert.NotNull(summary);
+        Assert.Contains("利用上限", summary);
+        Assert.Contains("2026-10-13 01:26:35", summary);
+        Assert.DoesNotContain("20261012221006080546d126e44ef8", summary);
+        Assert.Contains("認証に失敗", ApiDocumentAiRunner.ZcodeFailureSummary("responseBody: '{\"error\":{\"message\":\"Authentication Failed\"}}'\nError: Turn execution failed"));
+        Assert.Contains("形式", ApiDocumentAiRunner.ZcodeFailureSummary("ClientRequestSigningV4Error: Client signing credential must contain one separator."));
+        Assert.Equal("Error: Provider Registry 中不存在 Model: x/y", ApiDocumentAiRunner.ZcodeFailureSummary("Error: Provider Registry 中不存在 Model: x/y"));
+        Assert.Null(ApiDocumentAiRunner.ZcodeFailureSummary("Error: Turn execution failed (traceId: x)"));
+    }
+
+    [Fact]
+    public void GlmApiKey_IsProtectedWithDpapiAndResolvedBeforeEnvironment()
+    {
+        // 平文はDPAPIで暗号化され、暗号化済みの値は再暗号化しない。
+        var protectedKey = AppSettingsService.ProtectSecret(" id.secret ");
+        Assert.StartsWith("dpapi:", protectedKey, StringComparison.Ordinal);
+        Assert.DoesNotContain("id.secret", protectedKey);
+        Assert.Equal(protectedKey, AppSettingsService.ProtectSecret(protectedKey));
+        Assert.Equal("id.secret", AppSettingsService.UnprotectSecret(protectedKey));
+        // 復号できない値は未登録扱い。
+        Assert.Equal(string.Empty, AppSettingsService.UnprotectSecret("dpapi:AAAA"));
+        Assert.Equal(string.Empty, AppSettingsService.UnprotectSecret("dpapi:not-base64!"));
+        Assert.Equal(string.Empty, AppSettingsService.ProtectSecret("  "));
+        // 設定ファイルのキーを環境変数より優先する。
+        var settings = AppSettingsService.Normalize(new AppSettings { GlmApiKey = "id.secret" });
+        Assert.Equal("id.secret", AppSettingsService.ResolveGlmApiKey(settings));
+        Assert.Equal("設定ファイル", AppSettingsService.GlmApiKeySource(settings));
     }
 
     [Fact]

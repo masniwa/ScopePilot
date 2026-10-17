@@ -49,6 +49,7 @@ public sealed class ProjectStore
         project.Inputs ??= [];
         project.BrunoVerifications ??= [];
         project.ExplorationDocument ??= new();
+        project.ExplorationAi ??= new();
         project.ExplorationProxy ??= new();
         if (project.ExplorationDocument.Source is { } source) _ = ProjectPaths.Resolve(project, source.LocalPath);
         foreach (var reference in project.Inputs) _ = ProjectPaths.Resolve(project, reference.LocalPath);

@@ -12,8 +12,9 @@ public sealed record ZapPackage(string Directory, string PlanPath, string HarPat
 
 public sealed class ZapHandoffService
 {
-    public async Task<ZapPackage> BuildAsync(EngagementProject project)
+    public async Task<ZapPackage> BuildAsync(EngagementProject project, ZapScanTuning? tuning = null)
     {
+        var scanTuning = (tuning ?? ZapScanTuning.Defaults).Normalized();
         var settings = project.DiagnosticTools;
         var selected = project.Mode == InputMode.ApiDocument
             ? project.ApiRequests.Where(x => x.Selected).Select(x => (x.Method.ToUpperInvariant(), x.Url)).ToArray()
@@ -73,7 +74,7 @@ public sealed class ZapHandoffService
         {
             await File.WriteAllTextAsync(harPath, JsonSerializer.Serialize(new { log = new { version = "1.2", creator = new { name = "ScopePilot", version = "0.12" }, entries } }));
             await File.WriteAllTextAsync(planPath, CreatePlan(recordedTargets, Math.Clamp(project.MaxMinutes, 1, 120), activeScan, strength, threshold,
-                auth?.Header, auth is null ? null : BuildCookieScope(recordedTargets)));
+                auth?.Header, auth is null ? null : BuildCookieScope(recordedTargets), scanTuning));
             harEvidence = await ProjectPaths.EvidenceAsync(project, harPath, "har");
             planEvidence = await ProjectPaths.EvidenceAsync(project, planPath, "zap-passive-plan");
         }
@@ -85,7 +86,9 @@ public sealed class ZapHandoffService
             activeScan = activeScan ? new
             {
                 enabled = true, targets = recordedTargets, strength, threshold,
-                delayInMs = 100, threadPerHost = 1, maxTargets,
+                delayInMs = scanTuning.DelayInMs, threadPerHost = scanTuning.ThreadPerHost, maxTargets,
+                maxRuleDurationInMins = scanTuning.MaxRuleDurationInMins, maxAlertsPerRule = scanTuning.MaxAlertsPerRule,
+                scanHeadersAllRequests = scanTuning.ScanHeadersAllRequests, addQueryParam = scanTuning.AddQueryParam,
                 includeReferenceHars = settings.IncludeReferenceHars,
                 recordedAuthentication = settings.UseRecordedAuthentication,
                 authCookieNames = (IReadOnlyList<string>?)auth?.Names ?? Array.Empty<string>()
@@ -99,7 +102,7 @@ public sealed class ZapHandoffService
         await File.WriteAllTextAsync(Path.Combine(directory, "README.txt"),
             "ZAPへの引き渡し\nselected.harは採用対象の保存済み通信です。" +
             (activeScan
-                ? $"zap-active.yamlはパッシブ解析後、明示承認された対象URLだけへアクティブ診断を行います（強度{strength}・閾値{threshold}・1スレッド・100ms間隔）。攻撃リクエストが送信されます。\n" +
+                ? $"zap-active.yamlはパッシブ解析後、明示承認された対象URLだけへアクティブ診断を行います（強度{strength}・閾値{threshold}・{scanTuning.ThreadPerHost}スレッド・{scanTuning.DelayInMs}ms間隔・ルールごとの上限{scanTuning.MaxRuleDurationInMins}分）。攻撃リクエストが送信されます。\n" +
                   (auth is not null
                       ? "記録済みセッションCookieを再利用して認証後の状態で診断します。実行前に認証後URLへの到達確認を行います。Cookieの値はselected.harと同じ扱いで保管してください。\n"
                       : "") +
@@ -153,8 +156,9 @@ public sealed class ZapHandoffService
 
     internal static string CreatePlan(IEnumerable<string> targetUrls, int minutes, bool activeScan = false,
         string strength = ZapActiveScanProfile.DefaultStrength, string threshold = ZapActiveScanProfile.DefaultThreshold,
-        string? sessionCookie = null, string? cookieScope = null)
+        string? sessionCookie = null, string? cookieScope = null, ZapScanTuning? tuning = null)
     {
+        var limits = (tuning ?? ZapScanTuning.Defaults).Normalized();
         var targets = targetUrls.Select(x => ApiRequestFormatter.ValidateUrl(x).AbsoluteUri)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var roots = targets.Select(x => new Uri(x).GetLeftPart(UriPartial.Path))
@@ -179,10 +183,10 @@ public sealed class ZapHandoffService
             "  - type: activeScan\n    parameters:\n      context: scopepilot-recorded\n" +
             "      url: " + JsonSerializer.Serialize(x) + "\n" +
             $"      defaultStrength: {strength}\n      defaultThreshold: {threshold}\n" +
-            "      maxRuleDurationInMins: 1\n" +
+            $"      maxRuleDurationInMins: {limits.MaxRuleDurationInMins}\n" +
             $"      maxScanDurationInMins: {minutes}\n" +
-            "      addQueryParam: false\n      delayInMs: 100\n      handleAntiCSRFTokens: true\n" +
-            "      scanHeadersAllRequests: false\n      threadPerHost: 1\n      maxAlertsPerRule: 10\n")) : "") +
+            $"      addQueryParam: {limits.AddQueryParam.ToString().ToLowerInvariant()}\n      delayInMs: {limits.DelayInMs}\n      handleAntiCSRFTokens: true\n" +
+            $"      scanHeadersAllRequests: {limits.ScanHeadersAllRequests.ToString().ToLowerInvariant()}\n      threadPerHost: {limits.ThreadPerHost}\n      maxAlertsPerRule: {limits.MaxAlertsPerRule}\n")) : "") +
         "  - type: report\n    parameters:\n      template: traditional-json\n      reportDir: reports\n      reportFile: zap-report\n      displayReport: false\n" +
         "  - type: report\n    parameters:\n      template: traditional-html\n      reportDir: reports\n      reportFile: zap-report\n      displayReport: false\n";
         return plan;

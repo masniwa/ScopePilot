@@ -205,7 +205,7 @@ public sealed partial class MainViewModel
     {
         try
         {
-            var package = await _zapHandoff.BuildAsync(Project);
+            var package = await _zapHandoff.BuildAsync(Project, AppSettingsService.Load().ActiveScanTuning());
             LastBurpExportDirectory = package.Directory;
             BurpHandoffStatus = package.MessageCount > 0
                 ? $"保存済み通信 {package.MessageCount}件のZAPパッケージを準備しました。［ZAP診断を開始］でCLI実行できます。"
@@ -234,9 +234,10 @@ public sealed partial class MainViewModel
         try
         {
             await RecordProjectChangeAsync();
-            var package = await _zapHandoff.BuildAsync(Project);
+            var package = await _zapHandoff.BuildAsync(Project, AppSettingsService.Load().ActiveScanTuning());
             LastBurpExportDirectory = package.Directory;
-            var result = await _zapRunner.RunAsync(Project, package, new Progress<string>(Log), _runCancellation.Token, activeScanAcknowledged);
+            var result = await _zapRunner.RunAsync(Project, package, new Progress<string>(Log), _runCancellation.Token, activeScanAcknowledged,
+                AppSettingsService.Load().ActiveScanTuning());
             if (result.Status is "completed" or "warnings" && result.ReportPath is not null)
             {
                 var count = await _zapResults.ImportAsync(Project, result.ReportPath);

@@ -17,7 +17,13 @@ public sealed class McpSetupService
         var messages = new List<string>();
         var node = EnvironmentProbe.FindNode();
         var cli = Path.Combine(AppContext.BaseDirectory, "tools", "playwright-runtime", "node_modules", "@playwright", "mcp", "cli.js");
-        if (ApiDocumentAiRunner.FindExecutable(DocumentAiProvider.Codex) is null) messages.Add("[失敗] Codex CLIが見つかりません。");
+        // 画面探索のAI（Codex CLIまたはGLM（zcode））の実行環境を確認する。
+        if (project.ExplorationAi?.Provider == DocumentAiProvider.Glm)
+        {
+            if (ApiDocumentAiRunner.FindLaunch(DocumentAiProvider.Glm) is null) messages.Add("[失敗] zcode CLI（npmグローバル）が見つかりません。");
+            if (!File.Exists(ZcodeExplorationRunner.McpToolFilterPath())) messages.Add($"[失敗] MCPツールフィルターが見つかりません: {ZcodeExplorationRunner.McpToolFilterPath()}");
+        }
+        else if (ApiDocumentAiRunner.FindLaunch(DocumentAiProvider.Codex) is null) messages.Add("[失敗] Codex CLIが見つかりません。");
         if (node is null || !File.Exists(node)) messages.Add("[失敗] " + EnvironmentProbe.NodeNotFoundMessage);
         if (!File.Exists(cli)) messages.Add($"[失敗] Playwright MCP本体が見つかりません: {cli}");
         if (runDirectory is null)

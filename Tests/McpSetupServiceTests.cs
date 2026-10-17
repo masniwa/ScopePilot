@@ -9,11 +9,18 @@ public sealed class McpSetupServiceTests
 {
     [Fact]
     public void BurpProxy_DefaultsToUserSuppliedJarUnderDataRoot() =>
-        Assert.Equal(Path.Combine(@"C:\ScopePilot data", "mcp", "mcp-proxy-all.jar"), BurpProxyLocation.ResolvePath(null, @"C:\ScopePilot data"));
+        Assert.Equal(Path.Combine(@"C:\ScopePilot data", "mcp", "mcp-proxy-all.jar"), BurpProxyLocation.ResolvePath(null, null, @"C:\ScopePilot data"));
 
     [Fact]
     public void BurpProxy_ExplicitPathTakesPrecedenceOverDataRoot() =>
-        Assert.Equal(@"C:\Burp tools\proxy.jar", BurpProxyLocation.ResolvePath(@"C:\Burp tools\proxy.jar", @"C:\ScopePilot data"));
+        Assert.Equal(@"C:\Burp tools\proxy.jar", BurpProxyLocation.ResolvePath(@"C:\Burp tools\proxy.jar", null, @"C:\ScopePilot data"));
+
+    [Fact]
+    public void BurpProxy_AppSettingTakesPrecedenceOverEnvironmentVariable()
+    {
+        Assert.Equal(@"C:\App\proxy.jar", BurpProxyLocation.ResolvePath(@"C:\App\proxy.jar", @"C:\Env\proxy.jar", @"C:\ScopePilot data"));
+        Assert.Equal(@"C:\Env\proxy.jar", BurpProxyLocation.ResolvePath(" ", @"C:\Env\proxy.jar", @"C:\ScopePilot data"));
+    }
 
     private static string Configuration(string cli, bool enabled = true) => JsonSerializer.Serialize(new
     {

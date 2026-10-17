@@ -132,7 +132,9 @@ public sealed class RunHistoryService
         var fast = await ReadJsonAsync(Path.Combine(directory.FullName, "fast-crawl-summary.json"));
         var proxy = await ReadJsonAsync(Path.Combine(directory.FullName, "exploration-proxy.json"));
         var aiInput = await ReadJsonAsync(Path.Combine(directory.FullName, "ai-input.json"));
-        var result = await ReadJsonAsync(Path.Combine(directory.FullName, "codex-result.json"));
+        // 画面探索の結果はCodexなら codex-result.json、GLM（zcode）なら zcode-result.json。
+        var result = await ReadJsonAsync(Path.Combine(directory.FullName, "codex-result.json"))
+            ?? await ReadJsonAsync(Path.Combine(directory.FullName, ZcodeExplorationRunner.ResultFileName));
         var recovery = await ReadJsonAsync(Path.Combine(directory.FullName, "scopepilot-recovery.json"));
         var intervention = File.Exists(Path.Combine(directory.FullName, "human-intervention.json"));
         var startedAt = ReadDate(engagement, "runStartedAt") ?? directory.CreationTime;
@@ -148,7 +150,8 @@ public sealed class RunHistoryService
         {
             if (intervention) status = "waiting";
             else if (recovery is not null) status = ReadInt(recovery, "recoveredObservationCount") > 0 ? "partial" : "failed";
-            else if (File.Exists(Path.Combine(directory.FullName, "codex-run.log"))) status = "failed";
+            else if (File.Exists(Path.Combine(directory.FullName, "codex-run.log"))
+                || File.Exists(Path.Combine(directory.FullName, ZcodeExplorationRunner.LogFileName))) status = "failed";
             else if (fast is not null) status = ReadString(fast, "status") is "completed" ? "crawled" : ReadString(fast, "status") is "partial" ? "partial" : "failed";
             else status = "prepared";
         }
