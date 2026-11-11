@@ -4,9 +4,7 @@ ScopePilot Forkは、受託Web診断の事前探索と診断対象リクエス�
 
 ## Forkについて
 
-この版は [gsgwr/ScopePilot](https://github.com/gsgwr/ScopePilot) をFork元とする派生版です。原版は [umberbyte/ScopePilot](https://github.com/umberbyte/ScopePilot) です。上流の公式リリースとは別に、**ScopePilot Fork 0.13.0** として配布します。
-
-開発開始時のソースは原版のコミット `3fe8748b3c9225c61b0d60c5ec9ad640ecf2fbac` です。gsgwr版の確認時点のコミット `9f36ab374771302bf1f1ed5d1b53c2e2c7153ce7` より後の上流8コミットと、このForkの変更を含みます。公開先の所有者名はソースや配布物へ固定していません。
+この版は [gsgwr/ScopePilot](https://github.com/gsgwr/ScopePilot) をFork元とする派生版です。上流の公式リリースとは別に、**ScopePilot Fork 0.13.0** として配布します。
 
 ### このForkの主な変更
 
