@@ -7,13 +7,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.12.0</Version>
-    <AssemblyVersion>0.12.0.0</AssemblyVersion>
-    <FileVersion>0.12.0.0</FileVersion>
-    <Authors>umberbyte</Authors>
+    <Version>0.13.0</Version>
+    <Product>ScopePilot Fork</Product>
+    <Title>ScopePilot Fork</Title>
+    <AssemblyTitle>ScopePilot Fork</AssemblyTitle>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyVersion>0.13.0.0</AssemblyVersion>
+    <FileVersion>0.13.0.0</FileVersion>
+    <Authors>umberbyte;ScopePilot Fork contributors</Authors>
     <Copyright>Copyright (c) 2026, umberbyte</Copyright>
     <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
-    <Description>Web診断の事前探索と診断対象候補の整理を支援するWindowsアプリ</Description>
+    <Description>ScopePilot Fork: Web診断の事前探索と診断対象候補の整理を支援するWindowsアプリ</Description>
+    <DefaultItemExcludes>$(DefaultItemExcludes);temp\**</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Markdig" Version="1.4.0" />
@@ -29,7 +34,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="README.md">
+    <Content Include="README.md;DISTRIBUTION.md;testing.md;docs\RELEASE-NOTES-0.13.0.md;docs\RELEASING.md">
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="docs\PROJECTS-AND-HANDOFF.md">
@@ -52,7 +57,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="tools\fast-crawl.js;tools\crawl-policy.js;tools\zap-browser-record.js;tools\mcp-tool-filter.js">
+    <Content Include="tools\fast-crawl.js;tools\crawl-policy.js;tools\capture-ledger.js;tools\wire-capture.js;tools\zap-browser-record.js;tools\mcp-tool-filter.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

@@ -12,6 +12,9 @@ public sealed class ExplorationAiSettings
 
 public sealed class ExplorationDocumentSettings
 {
+    // New selections use Files. The original fields remain readable for saved
+    // single-document projects and the existing single-document import API.
+    public List<ExplorationReferenceDocument> Files { get; set; } = [];
     public string FileName { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public EvidenceReference? Source { get; set; }
@@ -21,4 +24,11 @@ public sealed class ExplorationDocumentSettings
     public AiReasoningLevel ReasoningLevel { get; set; } = AiReasoningLevel.Middle;
     // 文書内容のSHA-256がSourceSha256と一致するとき有効な抽出結果。
     public DocumentHints? Hints { get; set; }
+}
+
+public sealed record ExplorationReferenceDocument
+{
+    public string FileName { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public EvidenceReference? Source { get; set; }
 }

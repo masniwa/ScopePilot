@@ -30,13 +30,23 @@ public sealed class RunObservationCollector
             if (root.GetProperty("status").GetString() == "authenticated" && root.GetProperty("loginFormVisible").ValueKind == JsonValueKind.False && root.GetProperty("authenticatedIndicatorVisible").ValueKind == JsonValueKind.True)
             {
                 var landing = root.GetProperty("actualUrl").GetString()!;
-                ApiRequestFormatter.EnsureAllowed(landing, allowedOrigins);
+                AuthenticationFlow.EnsureNavigationAllowed(landing, allowedOrigins);
                 verifiedRole = root.GetProperty("activeRole").GetString() ?? role;
                 if (AuthenticationFlow.IsAnonymous(verifiedRole)) verifiedRole = "認証状態未確認";
                 authenticationTime = result.Values.Where(x => AuthenticationFlow.DisplayUrl(x.Url) == landing && ObservedRequestIdentity.IsAuthenticatedRole(x.Role))
                     .Select(x => (DateTimeOffset?)x.ObservedAt).Min() ?? root.GetProperty("checkedAt").GetDateTimeOffset();
             }
         }
+        DateTimeOffset? authenticationChangedAt = null;
+        var changesPath = Path.Combine(directory, "authentication-changes.jsonl");
+        if (File.Exists(changesPath))
+            foreach (var line in await File.ReadAllLinesAsync(changesPath))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                using var change = JsonDocument.Parse(line);
+                var at = change.RootElement.GetProperty("observedAt").GetDateTimeOffset();
+                if (authenticationChangedAt is null || at < authenticationChangedAt) authenticationChangedAt = at;
+            }
         foreach (var name in new[] { "fast-capture.har", "zap-fast-capture.har", "zap-ai-capture.har" })
         {
             var path = Path.Combine(directory, name);
@@ -47,6 +57,8 @@ public sealed class RunObservationCollector
                 var match = result.Values.Where(x => x.Url == r.Url && x.Method == r.Method && Math.Abs((x.ObservedAt - r.ObservedAt).TotalSeconds) < 5)
                     .MinBy(x => Math.Abs((x.ObservedAt - r.ObservedAt).TotalSeconds));
                 r.Role = match?.Role ?? (authenticationTime.HasValue ? r.ObservedAt >= authenticationTime ? verifiedRole : "未認証" : "認証状態未確認");
+                if (authenticationChangedAt.HasValue && r.ObservedAt >= authenticationChangedAt.Value)
+                    r.Role = "認証状態未確認";
                 r.Source = name;
                 var key = ObservedRequestIdentity.Build(r);
                 if (!result.TryGetValue(key, out var old)) result[key] = r;

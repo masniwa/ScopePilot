@@ -10,7 +10,7 @@ namespace ScopePilot;
 public partial class App : Application
 {
     // Inno Setup checks this mutex before replacing application files.
-    private readonly System.Threading.Mutex installerMutex = new(false, @"Local\ScopePilot.Application");
+    private readonly System.Threading.Mutex installerMutex = new(false, @"Local\ScopePilot.Fork.Application");
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -30,8 +30,15 @@ public partial class App : Application
                     return;
                 }
                 MainWindow = workspace;
+                // Keep a visible owner while the native folder picker is open.
+                // The startup chooser has closed and the workspace was not yet shown.
+                workspace.Show();
                 var opened = await workspace.StartProjectAsync(chooser.SelectedAction);
-                if (!opened) continue;
+                if (!opened)
+                {
+                    workspace.Hide();
+                    continue;
+                }
                 MainWindow = workspace;
                 ShutdownMode = ShutdownMode.OnMainWindowClose;
                 workspace.Show();
@@ -40,7 +47,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"プロジェクトを準備できませんでした。\n{ex.Message}", "ScopePilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show($"プロジェクトを準備できませんでした。\n{ex.Message}", "ScopePilot Fork", MessageBoxButton.OK, MessageBoxImage.Error);
             workspace.Close();
             Shutdown(1);
         }

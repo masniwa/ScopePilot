@@ -39,11 +39,14 @@ public sealed class EngagementProject
     public string SupportingOrigins { get; set; } = string.Empty;
     public string Roles { get; set; } = "未認証\n一般ユーザー";
     public string ActiveRole { get; set; } = "未認証";
-    public string ForbiddenActions { get; set; } = "削除\n購入・決済\n申請・承認\nメール・通知送信\nファイルアップロード\nログアウト";
+    public const string LegacyDefaultForbiddenActions = "削除\n購入・決済\n申請・承認\nメール・通知送信\nファイルアップロード\nログアウト";
+    public const string DefaultForbiddenActions = "削除\nDelete\nRemove\n購入\n決済\nPurchase\nCheckout\nPay\n申請\n承認\nApprove\nメール送信\n通知送信\nSend email\nSend notification\nファイルアップロード\nUpload\nログアウト\nLogout\nSign out";
+    public string ForbiddenActions { get; set; } = DefaultForbiddenActions;
     public int MaxPages { get; set; } = 500;
     public int MaxMinutes { get; set; } = 30;
     public int MaxRequests { get; set; } = 5000;
     public bool EnableFormSubmissions { get; set; }
+    public bool EnableAiInteractions { get; set; }
     public GuidelineSelectionOptions Guidelines { get; set; } = new();
     public ProjectStatus Status { get; set; } = ProjectStatus.Draft;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;

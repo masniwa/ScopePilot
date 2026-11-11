@@ -21,6 +21,6 @@ public partial class ZapAlertDetailsWindow : Window
     private void OpenReportFolder_Click(object sender, RoutedEventArgs e)
     {
         try { WorkspacePathOpener.Open(System.IO.Path.GetDirectoryName(_details.ReportPath)!); }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "ScopePilot", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "ScopePilot Fork", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 }

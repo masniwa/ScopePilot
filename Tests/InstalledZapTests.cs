@@ -30,22 +30,33 @@ public sealed class InstalledZapTests
         project.Inputs.Add((await ProjectPaths.ImportAsync(project, path, "har")) with { Role = project.ActiveRole });
         var package = await new ZapHandoffService().BuildAsync(project);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-        var result = await new ZapCliRunner().RunAsync(project, package, null, cancellation.Token);
-        Assert.True(result.Status is "completed" or "warnings", await File.ReadAllTextAsync(Path.Combine(package.Directory, "zap-run.log")));
-        Assert.NotNull(result.ReportPath);
-        Assert.True(File.Exists(Path.Combine(package.Directory, "reports", "zap-report.html")));
-        await new ZapResultImporter().ImportAsync(project, result.ReportPath!);
-        Assert.NotEmpty(project.DiagnosticObservations);
-        Assert.All(project.DiagnosticObservations, x => Assert.Equal(DiagnosisState.TargetAlertEffectUnconfirmed, x.State));
-        // Optional retained artifacts make installation failures diagnosable without keeping a global project catalog.
-        if (Environment.GetEnvironmentVariable("SCOPEPILOT_TEST_ZAP_ARTIFACTS") is { Length: > 0 } output)
+        try
         {
-            Directory.CreateDirectory(output);
-            foreach (var file in new[] { "zap-check.log", "zap-run.log", "zap-summary.json", "zap-passive.yaml" })
-                File.Copy(Path.Combine(package.Directory, file), Path.Combine(output, file), overwrite: true);
-            var zapLog = Path.Combine(package.Directory, "zap-home", "zap.log");
-            if (File.Exists(zapLog)) File.Copy(zapLog, Path.Combine(output, "zap-verbose.log"), overwrite: true);
-            File.Copy(result.ReportPath!, Path.Combine(output, "zap-report.json"), overwrite: true);
+            var result = await new ZapCliRunner().RunAsync(project, package, null, cancellation.Token);
+            Assert.True(result.Status is "completed" or "warnings", await File.ReadAllTextAsync(Path.Combine(package.Directory, "zap-run.log")));
+            Assert.NotNull(result.ReportPath);
+            Assert.True(File.Exists(Path.Combine(package.Directory, "reports", "zap-report.html")));
+            await new ZapResultImporter().ImportAsync(project, result.ReportPath!);
+            Assert.NotEmpty(project.DiagnosticObservations);
+            Assert.All(project.DiagnosticObservations, x => Assert.Equal(DiagnosisState.TargetAlertEffectUnconfirmed, x.State));
+        }
+        finally
+        {
+            // Preserve startup/validation failures as well as successful output.
+            if (Environment.GetEnvironmentVariable("SCOPEPILOT_TEST_ZAP_ARTIFACTS") is { Length: > 0 } output)
+            {
+                Directory.CreateDirectory(output);
+                foreach (var file in new[] { "zap-check.log", "zap-run.log", "zap-summary.json", "zap-passive.yaml", "zap-addon-list.log", "zap-environment.json", "selected.har" })
+                    if (File.Exists(Path.Combine(package.Directory, file)))
+                        File.Copy(Path.Combine(package.Directory, file), Path.Combine(output, file), overwrite: true);
+                var zapLog = Path.Combine(package.Directory, "zap-home", "zap.log");
+                if (File.Exists(zapLog)) File.Copy(zapLog, Path.Combine(output, "zap-verbose.log"), overwrite: true);
+                foreach (var reportName in new[] { "zap-report.json", "zap-report.html" })
+                {
+                    var reportPath = Path.Combine(package.Directory, "reports", reportName);
+                    if (File.Exists(reportPath)) File.Copy(reportPath, Path.Combine(output, reportName), overwrite: true);
+                }
+            }
         }
     }
 }

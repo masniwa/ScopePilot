@@ -270,8 +270,8 @@ public sealed class AiInputBuilder
                 var root = document.RootElement;
                 var url = root.GetProperty("url").GetString() ?? "";
                 var title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
-                var password = false;
-                var user = false;
+                var password = root.TryGetProperty("hasPasswordField", out var standalonePassword) && standalonePassword.ValueKind == JsonValueKind.True;
+                var user = root.TryGetProperty("hasUserField", out var standaloneUser) && standaloneUser.ValueKind == JsonValueKind.True;
                 var unauthorized = root.TryGetProperty("statusCode", out var status) && status.TryGetInt32(out var code) && code == 401;
                 if (root.TryGetProperty("forms", out var forms))
                     foreach (var form in forms.EnumerateArray())
@@ -280,7 +280,30 @@ public sealed class AiInputBuilder
                         user |= form.TryGetProperty("hasUserField", out var u) && u.ValueKind == JsonValueKind.True;
                     }
                 if ((!unauthorized && !AuthenticationFlow.LooksLikeLogin(url, title, password, user)) || !seen.Add(url)) continue;
-                pages.Add(new { url, title, hasPasswordField = password, hasUserField = user,
+                var links = new List<object>();
+                var seenLinks = new HashSet<string>(StringComparer.Ordinal);
+                if (Uri.TryCreate(url, UriKind.Absolute, out var pageUri) && root.TryGetProperty("observedLinks", out var observedLinks) && observedLinks.ValueKind == JsonValueKind.Array)
+                    foreach (var link in observedLinks.EnumerateArray())
+                    {
+                        var label = link.TryGetProperty("label", out var labelNode) && labelNode.ValueKind == JsonValueKind.String ? labelNode.GetString() ?? "" : "";
+                        if (link.TryGetProperty("url", out var censoredUrl) && censoredUrl.ValueKind == JsonValueKind.Null &&
+                            link.TryGetProperty("requiresUiLookup", out var lookup) && lookup.ValueKind == JsonValueKind.True)
+                        {
+                            links.Add(new { url = (string?)null, label = label[..Math.Min(label.Length, 160)], requiresUiLookup = true });
+                            if (links.Count == 50) break;
+                            continue;
+                        }
+                        if (!link.TryGetProperty("url", out var linkUrl) || linkUrl.ValueKind != JsonValueKind.String ||
+                            !Uri.TryCreate(linkUrl.GetString(), UriKind.Absolute, out var target) || target.Scheme is not ("http" or "https") || target.UserInfo.Length > 0 ||
+                            !string.Equals(target.GetLeftPart(UriPartial.Authority), pageUri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase) || !seenLinks.Add(target.AbsoluteUri)) continue;
+                        // Token-bearing queries/fragments stay in local evidence. A
+                        // stripped URL would invent a different navigation target.
+                        var needsLookup = target.Query.Length > 0 || target.Fragment.Contains('?') ||
+                            (target.Fragment.Length > 0 && !target.Fragment.StartsWith("#/") && !target.Fragment.StartsWith("#!/"));
+                        links.Add(new { url = needsLookup ? null : target.AbsoluteUri, label = label[..Math.Min(label.Length, 160)], requiresUiLookup = needsLookup });
+                        if (links.Count == 50) break;
+                    }
+                pages.Add(new { url, title, hasPasswordField = password, hasUserField = user, observedLinks = links,
                     reason = "認証画面の可能性があります。実際の画面を確認し、認証情報の入力をユーザーへ依頼してください。" });
                 if (pages.Count == 20) break;
             }

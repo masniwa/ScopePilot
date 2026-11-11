@@ -16,16 +16,17 @@ const logout = '<a href="/logout">Logout</a>';
 let origin;
 const site = http.createServer(async (req, res) => {
   requested.push(req.method + ' ' + req.url);
-  if (req.url === '/robots.txt' || req.url === '/sitemap.xml') { res.writeHead(404); res.end(); return; }
+  if (req.url === '/robots.txt' || req.url === '/sitemap.xml') { res.writeHead(404, {'Content-Length':'0'}); res.end(); return; }
   if (req.url === '/login' && req.method === 'POST') {
     for await (const chunk of req) { /* Only local fixture credentials, never recorded. */ }
     res.writeHead(302, { 'Set-Cookie': 'fixtureSession=ok; HttpOnly; Path=/', Location: '/' }); res.end(); return;
   }
-  if (req.url === '/login') { res.end('<title>Login</title><form action="/login" method="post"><input name="username"><input name="password" type="password"><button>Login</button></form>'); return; }
+  if (req.url === '/login') { res.end('<title>Login</title><form action="/login" method="post"><input name="username"><input name="password" type="password"><button>Login</button></form><a href="/register">Register</a><a href="/reset?token=fixture-secret">Reset</a>'); return; }
   if (!(req.headers.cookie || '').includes('fixtureSession=ok')) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
   res.setHeader('Content-Type', 'text/html');
-  if (req.url === '/') res.end('<title>Home</title>' + logout + modules.map((u, i) => `<a href="${u}">Feature ${i}</a>`).join('') + '<a href="/reset">Reset DB</a>' + '<a href="/download">Reset</a>');
-  else if (modules.includes(req.url)) res.end('<title>Feature</title>' + logout + '<a href="/nested">Details</a><form action="/mutation" method="post"><input name="username"><input type="password" name="password"><button>Change</button></form>');
+  if (req.url === '/menu') { await sleep(350); return res.end(modules.map((u, i) => `<a href="${u}">Feature ${i}</a>`).join('')); }
+  if (req.url === '/') res.end('<title>Home</title>' + logout + '<nav id="menu"></nav><script>fetch("/menu").then(r=>r.text()).then(html=>document.querySelector("#menu").innerHTML=html)</script><a href="/reset">Reset DB</a><a href="/download">Reset</a>');
+  else if (modules.includes(req.url)) res.end('<title>Feature</title><form action="/logout" method="post"><button>Logout</button></form><a href="/nested">Details</a><form action="/mutation" method="post"><input name="username"><input type="password" name="password"><button>Change</button></form>');
   else if (req.url === '/nested') res.end('<title>Details</title>' + logout + '<form action="/search" method="post"><input name="query"><button>Search</button></form>');
   else if (req.url === '/search' && req.method === 'POST') {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -55,7 +56,9 @@ let worker, mcp, attached;
   worker.stdout.on('data', b => { output += b.toString(); if (output.includes('CRAWL_DONE ')) done = true; });
   worker.stderr.on('data', b => { output += b.toString(); });
   worker.on('exit', code => { if (!done) output += `EARLY_EXIT ${code}`; });
-  const pending = await until(() => json('human-intervention.json'));
+  let pending;
+  try {pending = await until(() => json('human-intervention.json'));}
+  catch(error){throw Error(error.message+'\n'+output);}
   fs.writeFileSync(path.join(run, 'resume.signal'), JSON.stringify({ requestId: 'STALE-ID', activeRole: 'User' }));
   await sleep(500);
   assert.equal(json('human-intervention.json').requestId, pending.requestId);
@@ -71,6 +74,7 @@ let worker, mcp, attached;
   assert.ok(done, output);
   const summary = json('fast-crawl-summary.json');
   assert.equal(summary.status, 'completed', output);
+  const loginPage=summary.pages.find(p=>p.url===origin+'/login');assert.ok(loginPage.observedLinks.some(l=>l.url===origin+'/register'));assert.ok(loginPage.observedLinks.some(l=>l.label==='Reset'&&l.requiresUiLookup&&l.url===null));assert.ok(!JSON.stringify(summary).includes('fixture-secret'),'opaque URL values must not leak through the crawl summary');
   assert.equal(summary.activeRole, 'User');
   assert.equal(summary.visitedPageCount, 21); // login + authenticated home + 18 visible features + nested page
   for (const url of modules) assert.ok(requested.includes('GET ' + url), url);

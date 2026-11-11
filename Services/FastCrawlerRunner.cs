@@ -15,11 +15,13 @@ public sealed class FastCrawlerRunner
     private Task? _output;
     private Task? _error;
     private StreamWriter? _log;
+    private string? _captureProgressPath;
 
     public async Task<FastCrawlResult> RunAsync(string runDirectory, IProgress<string> progress, CancellationToken cancellationToken,
         Action<string>? interventionDetected = null, Action<string>? navigationDetected = null, bool headless = false)
     {
         await CloseAsync();
+        _captureProgressPath = Path.Combine(runDirectory, "capture-progress.json");
         var node = EnvironmentProbe.FindNode();
         var script = Path.Combine(AppContext.BaseDirectory, "tools", "fast-crawl.js");
         if (node is null) throw new FileNotFoundException(EnvironmentProbe.NodeNotFoundMessage);
@@ -92,15 +94,43 @@ public sealed class FastCrawlerRunner
         if (_process is not { } process) return;
         try
         {
-            if (!process.HasExited)
+            var requestedClose = !process.HasExited;
+            if (requestedClose)
             {
                 try { await process.StandardInput.WriteLineAsync("close"); await process.StandardInput.FlushAsync(); } catch (IOException) { }
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try { await process.WaitForExitAsync(timeout.Token); } catch (OperationCanceledException) { TryStop(process); await process.WaitForExitAsync(); }
+                if (!await WaitForCaptureExitAsync(process, _captureProgressPath, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(30), TimeSpan.FromSeconds(1)))
+                {
+                    TryStop(process); await process.WaitForExitAsync();
+                    throw new IOException("通信保存の進行を5分間確認できないか、終了処理の上限30分に達しました。未完了のHAR・通信ジャーナル・進行記録を保持しています。");
+                }
             }
             if (_output is not null && _error is not null) await Task.WhenAll(_output, _error);
+            if (requestedClose && process.ExitCode != 0) throw new IOException($"探索ブラウザの終了処理が失敗しました (exit {process.ExitCode})。通信原本の保存状態を確認してください。");
         }
         finally { _process = null; process.Dispose(); _log?.Dispose(); _log = null; }
+    }
+
+    internal static async Task<bool> WaitForCaptureExitAsync(Process process, string? progressFile, TimeSpan inactivityTimeout, TimeSpan maximumDuration, TimeSpan pollInterval)
+    {
+        DateTime Stamp()
+        {
+            try { return progressFile is not null && File.Exists(progressFile) ? File.GetLastWriteTimeUtc(progressFile) : DateTime.MinValue; }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return DateTime.MinValue; }
+        }
+        var elapsed = Stopwatch.StartNew();
+        var lastActivity = TimeSpan.Zero;
+        var lastStamp = Stamp();
+        var exited = process.WaitForExitAsync();
+        while (!exited.IsCompleted)
+        {
+            await Task.WhenAny(exited, Task.Delay(pollInterval));
+            if (exited.IsCompleted) break;
+            var stamp = Stamp();
+            if (stamp != lastStamp) { lastStamp = stamp; lastActivity = elapsed.Elapsed; }
+            if (elapsed.Elapsed >= maximumDuration || elapsed.Elapsed - lastActivity >= inactivityTimeout) return false;
+        }
+        await exited;
+        return true;
     }
 
     public void Stop() { if (_process is { HasExited: false } process) TryStop(process); }

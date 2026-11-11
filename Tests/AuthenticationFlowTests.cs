@@ -10,8 +10,23 @@ namespace ScopePilot.Tests;
 public sealed class AuthenticationFlowTests
 {
     [Theory]
+    [InlineData("表示したGitHubリンクは許可Origin外へ転送するため未クリック。", false)]
+    [InlineData("GitHubも許可Origin http://example.test:42000 外への遷移であり送信不可。", false)]
+    [InlineData("転送先Originが許可Origin https://example.test と一致しないため未クリック。", false)]
+    [InlineData("The observed link is outside allowed origin.", false)]
+    [InlineData("URLは許可Origin外ではありません。ボタンはdisabledで未確認。", true)]
+    [InlineData("URLは許可Origin外ではなく、件数不足で未確認。", true)]
+    [InlineData("現在のメニューに入口がなく未確認。", true)]
+    public void ExplicitExternalDestinationDoesNotKeepOrdinaryQueueOpen(string reason, bool pending)
+    {
+        using var item = JsonDocument.Parse(JsonSerializer.Serialize(new { operation = "Link navigation", outcome = "blocked", reason }));
+        Assert.Equal(pending, ExplorationCoverage.IsPending(item.RootElement));
+    }
+    [Theory]
     [InlineData("http://192.168.0.27/login.php", "", false, false, true)]
     [InlineData("https://example.test/signin", "", false, false, true)]
+    [InlineData("https://example.test/#/login", "Application", false, false, true)]
+    [InlineData("https://example.test/#!/signin?return=home", "Application", false, false, true)]
     [InlineData("https://example.test/session", "", true, true, true)]
     [InlineData("https://example.test/auth", "サインイン", false, false, true)]
     [InlineData("https://example.test/change-password", "設定", true, false, false)]
@@ -34,6 +49,85 @@ public sealed class AuthenticationFlowTests
         Assert.Equal(0, input.FormPatternCount);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(input.Path));
         Assert.Equal("https://example.test/login.php", Assert.Single(json.RootElement.GetProperty("authenticationPages").EnumerateArray()).GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public async Task BrowserStartPreservesSpaRouteWhileApiRequestsRejectFragmentsAndScopeRemainsStrict()
+    {
+        using var temp = new TestFolder();
+        var project = temp.Project();
+        project.StartUrl = "https://example.test/#/login";
+        project.AfterAuthenticationUrl = "https://example.test/#/dashboard";
+        var run = await new ExplorationPackageBuilder().BuildAsync(project);
+        using var contract = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(run, "engagement.json")));
+        Assert.Equal(project.StartUrl, contract.RootElement.GetProperty("StartUrl").GetString());
+        Assert.Throws<InvalidDataException>(() => ApiRequestFormatter.ValidateUrl(project.StartUrl));
+        foreach (var invalid in new[] { "https://outside.test/#/login", "https://user:secret@example.test/#/login", "javascript:alert(1)", "https://example.test/#/login\n" })
+        {
+            project.StartUrl = invalid;
+            Assert.Throws<InvalidDataException>(() => AuthenticationFlow.ValidateTarget(project));
+        }
+        project.StartUrl = "https://example.test/#/login";
+        Assert.Contains("未到達", AuthenticationFlow.FormatNavigation("""{"status":"authenticated","actualUrl":"https://example.test/#/other","loginFormVisible":false,"authenticatedIndicatorVisible":true}""", project));
+        Assert.Contains("認証後の到達先:", AuthenticationFlow.FormatNavigation("""{"status":"authenticated","actualUrl":"https://example.test/#/dashboard","loginFormVisible":false,"authenticatedIndicatorVisible":true}""", project));
+        Assert.Equal("https://example.test/#/dashboard", AuthenticationFlow.DisplayUrl("https://example.test/?token=SECRET#/dashboard?token=SECRET"));
+        Assert.DoesNotContain("SECRET", AuthenticationFlow.DisplayUrl("https://example.test/#access_token=SECRET"));
+    }
+
+    [Fact]
+    public async Task ObservationCollectionAcceptsScopedSpaLandingAndKeepsHttpRequestIdentity()
+    {
+        using var temp = new TestFolder();
+        var at = DateTimeOffset.UtcNow;
+        var navigation = Path.Combine(temp.Path, "authentication-navigation.json");
+        await File.WriteAllTextAsync(navigation, JsonSerializer.Serialize(new { status = "authenticated", actualUrl = "https://example.test/#/dashboard", loginFormVisible = false, authenticatedIndicatorVisible = true, activeRole = "User", checkedAt = at }));
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "fast-capture.har"), JsonSerializer.Serialize(new { log = new { entries = new[] { new {
+            startedDateTime = at.AddSeconds(1), request = new { method = "GET", url = "https://example.test/api/items" }, response = new { status = 200, content = new { mimeType = "application/json" } }
+        } } } }));
+        await new RunObservationCollector().CollectAsync(temp.Path, "https://example.test", "User");
+        var item = Assert.Single(await new RequestImporter().ImportAsync(Path.Combine(temp.Path, "observed-requests.jsonl")));
+        Assert.Equal("User", item.Role);
+        Assert.Equal("https://example.test/api/items", item.Url);
+        await File.WriteAllTextAsync(navigation, JsonSerializer.Serialize(new { status = "authenticated", actualUrl = "https://outside.test/#/dashboard", loginFormVisible = false, authenticatedIndicatorVisible = true, activeRole = "User", checkedAt = at }));
+        await Assert.ThrowsAsync<InvalidDataException>(() => new RunObservationCollector().CollectAsync(temp.Path, "https://example.test", "User"));
+    }
+
+    [Fact]
+    public async Task AuthenticationPreparationKeepsPublicUiLinksWithoutLeakingOpaqueNavigationState()
+    {
+        using var temp = new TestFolder();
+        var project = temp.Project();
+        project.EnableAiInteractions = true;
+        var run = await new ExplorationPackageBuilder().BuildAsync(project);
+        await File.WriteAllTextAsync(Path.Combine(run, "crawl-pages.jsonl"), JsonSerializer.Serialize(new {
+            url = "https://example.test/dialog", title = "Application", forms = Array.Empty<object>(), hasPasswordField = true, hasUserField = true,
+            observedLinks = new object[] {
+                new {url="https://example.test/#/register",label="Register"},
+                new {url="https://example.test/#/register",label="Duplicate"},
+                new {url="https://example.test/reset?token=SECRET",label="Reset password"},
+                new {url="https://example.test/#access_token=SECRET",label="Opaque state"},
+                new {url=(string?)null,label="Captured opaque link",requiresUiLookup=true},
+                new {url="https://outside.test/register",label="External"},
+                new {url="https://example.test:444/register",label="Other port"},
+                new {url="https://user:SECRET@example.test/register",label="Credentials"}
+            }
+        }) + "\n");
+        var built = await new AiInputBuilder().BuildAsync(run);
+        var input = await File.ReadAllTextAsync(built.Path);
+        Assert.DoesNotContain("SECRET", input);
+        Assert.DoesNotContain("outside.test", input);
+        using var json = JsonDocument.Parse(input);
+        var page = Assert.Single(json.RootElement.GetProperty("authenticationPages").EnumerateArray());
+        Assert.True(page.GetProperty("hasPasswordField").GetBoolean());
+        var links = page.GetProperty("observedLinks").EnumerateArray().ToArray();
+        Assert.Equal(4, links.Length);
+        Assert.Equal("https://example.test/#/register", links[0].GetProperty("url").GetString());
+        Assert.False(links[0].GetProperty("requiresUiLookup").GetBoolean());
+        Assert.All(links.Skip(1), link => { Assert.Equal(JsonValueKind.Null, link.GetProperty("url").ValueKind); Assert.True(link.GetProperty("requiresUiLookup").GetBoolean()); });
+        var prompt = await File.ReadAllTextAsync(Path.Combine(run, "prompt.md"));
+        Assert.Contains("authenticationPages.observedLinks", prompt);
+        Assert.Contains("認証をやり直す目的", prompt);
+        Assert.Contains("正常系の成功と区別", prompt);
     }
 
     [Fact]

@@ -17,6 +17,37 @@ public sealed class CodexExplorationRunner
         CancellationToken cancellationToken,
         Action<string>? navigationDetected = null)
     {
+        var result = await RunPassAsync(runDirectory, progress, interventionDetected, cancellationToken, navigationDetected, await ExplorationCoverage.ExecutionAsync(runDirectory, cancellationToken));
+        for (var round = 1; round <= ExplorationCoverage.MaxContinuationRounds + 1 && result.ExitCode == 0 && !result.Cancelled && !result.HumanInterventionPending; round++)
+        {
+            var continuation = await ExplorationCoverage.ContinuationAsync(runDirectory, round, cancellationToken);
+            if (continuation is null) break;
+            progress.Report($"未実行操作を点検し、同じブラウザで追加探索します ({round}/{ExplorationCoverage.MaxContinuationRounds})。");
+            result = await RunPassAsync(runDirectory, progress, interventionDetected, cancellationToken, navigationDetected, continuation);
+            if (result.ExitCode == 0 && !result.Cancelled) await ExplorationCoverage.MergeAsync(runDirectory, round, cancellationToken);
+        }
+        if (!result.Cancelled)
+        {
+            if (result.ExitCode == 0 && !result.HumanInterventionPending && await ExplorationPhase.FinalizationAsync(runDirectory, cancellationToken) is { } finalization)
+            {
+                progress.Report("通常操作の点検を終え、片付けと許可されたログアウトを別パスで確認します。");
+                try
+                {
+                    result = await RunPassAsync(runDirectory, progress, interventionDetected, cancellationToken, navigationDetected, finalization);
+                    if (result.ExitCode == 0 && !result.Cancelled) await ExplorationCoverage.MergeAsync(runDirectory, ExplorationCoverage.FinalizationRound, cancellationToken);
+                }
+                finally { await ExplorationPhase.SetAsync(runDirectory, "finished", false, CancellationToken.None); }
+            }
+            var manual = await ExplorationCoverage.WriteManualOperationsAsync(runDirectory, cancellationToken);
+            if (manual > 0) progress.Report($"手動で確認する特殊操作を{manual}件、manual-operations.txtへ保存しました。");
+        }
+        return result;
+    }
+
+    private async Task<ExplorationRunResult> RunPassAsync(
+        string runDirectory, IProgress<string> progress, Action<string> interventionDetected,
+        CancellationToken cancellationToken, Action<string>? navigationDetected, string? continuation = null)
+    {
         var codex = FindCodex();
         if (codex is null) throw new FileNotFoundException("Codex CLIが見つかりません。環境チェックを実行してください。");
 
@@ -24,7 +55,7 @@ public sealed class CodexExplorationRunner
         var resultPath = Path.Combine(runDirectory, "codex-result.json");
         var interventionPath = Path.Combine(runDirectory, "human-intervention.json");
         var logPath = Path.Combine(runDirectory, "codex-run.log");
-        var prompt = await BuildPromptAsync(runDirectory, cancellationToken);
+        var prompt = await BuildPromptAsync(runDirectory, cancellationToken) + continuation;
         if (File.Exists(resultPath)) File.Move(resultPath, resultPath + ".previous", true);
 
         var startInfo = new ProcessStartInfo
@@ -46,7 +77,7 @@ public sealed class CodexExplorationRunner
             "--config", "features.shell_tool=false", "--config", "features.apply_patch_freeform=false", "--config", "web_search=\"disabled\"",
             "--config", "approval_policy=\"never\"",
             "--config", "mcp_servers.playwright.default_tools_approval_mode=\"approve\"",
-            "--config", "mcp_servers.playwright.disabled_tools=[\"browser_run_code_unsafe\",\"browser_file_upload\",\"browser_drop\",\"browser_drag\"]",
+            "--config", "mcp_servers.playwright.disabled_tools=[\"browser_run_code_unsafe\",\"browser_drop\"]",
             "--skip-git-repo-check", "--cd", runDirectory, "--output-schema", schemaPath,
             "--output-last-message", resultPath
         }) startInfo.ArgumentList.Add(argument);
@@ -108,7 +139,12 @@ public sealed class CodexExplorationRunner
         }
         synchronizedLog.WriteLine($"[{DateTimeOffset.Now:O}] Codex CLI exit: {process.ExitCode}; cancelled={cancelled}");
         if (finalMessage is not null) await File.WriteAllTextAsync(resultPath, finalMessage);
-        if (File.Exists(resultPath)) await File.WriteAllTextAsync(Path.Combine(runDirectory, "exploration-summary.json"), await File.ReadAllTextAsync(resultPath));
+        if (File.Exists(resultPath))
+        {
+            await File.WriteAllTextAsync(Path.Combine(runDirectory, "exploration-summary.json"), await File.ReadAllTextAsync(resultPath));
+            await ExplorationCoverage.SynchronizeInventoryAsync(runDirectory, CancellationToken.None);
+            await File.WriteAllTextAsync(resultPath, await File.ReadAllTextAsync(Path.Combine(runDirectory, "exploration-summary.json")));
+        }
         return new(process.ExitCode, cancelled, File.Exists(interventionPath), resultPath);
     }
 
@@ -121,7 +157,7 @@ public sealed class CodexExplorationRunner
     internal static async Task<string> BuildPromptAsync(string runDirectory, CancellationToken cancellationToken)
     {
         var prompt = await File.ReadAllTextAsync(Path.Combine(runDirectory, "prompt.md"), cancellationToken);
-        foreach (var input in new[] { "engagement.json", "ai-input.json", "fast-crawl-summary.json", "authentication-navigation.json", "selection-guidance.md", ExplorationDocumentService.RunFileName })
+        foreach (var input in new[] { "engagement.json", "ai-input.json", "fast-crawl-summary.json", "authentication-navigation.json", ExplorationAuthenticationEvidence.FileName, ExplorationCoverage.InventoryFileName, "selection-guidance.md", ExplorationDocumentService.RunFileName, ExplorationDocumentService.IndexFileName, "upload-fixture.json" })
         {
             var inputPath = Path.Combine(runDirectory, input);
             if (!File.Exists(inputPath)) continue;

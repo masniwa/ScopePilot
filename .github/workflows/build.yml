@@ -1,6 +1,7 @@
-name: Build ScopePilot
+name: Build ScopePilot Fork
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
   pull_request:
@@ -64,9 +65,9 @@ jobs:
       - name: Upload publish artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScopePilot-${{ matrix.runtime }}
+          name: ScopePilot-Fork-${{ matrix.runtime }}
           path: |
-            artifacts/ScopePilot-*-${{ matrix.runtime }}.zip
-            artifacts/ScopePilot-*-${{ matrix.runtime }}.zip.sha256
-            artifacts/ScopePilot-*-${{ matrix.runtime }}-Setup.exe
-            artifacts/ScopePilot-*-${{ matrix.runtime }}-Setup.exe.sha256
+            artifacts/ScopePilot-Fork-*-${{ matrix.runtime }}.zip
+            artifacts/ScopePilot-Fork-*-${{ matrix.runtime }}.zip.sha256
+            artifacts/ScopePilot-Fork-*-${{ matrix.runtime }}-Setup.exe
+            artifacts/ScopePilot-Fork-*-${{ matrix.runtime }}-Setup.exe.sha256

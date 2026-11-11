@@ -66,7 +66,7 @@ public partial class MainWindow : Window
     internal MainWindow(bool initializeProject)
     {
         InitializeComponent();
-        Title = $"ScopePilot {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
+        Title = $"ScopePilot Fork {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
         DataContext = _viewModel;
         _viewModel.ChooseNewProjectFile = () =>
         {
@@ -128,8 +128,8 @@ public partial class MainWindow : Window
     };
     private void ShowProjectError(string message)
     {
-        if (IsVisible) MessageBox.Show(this, message, "ScopePilot", MessageBoxButton.OK, MessageBoxImage.Warning);
-        else MessageBox.Show(message, "ScopePilot", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (IsVisible) MessageBox.Show(this, message, "ScopePilot Fork", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else MessageBox.Show(message, "ScopePilot Fork", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
     private void Window_SourceUpdated(object sender, System.Windows.Data.DataTransferEventArgs e) => _viewModel.RefreshSaveState();
     private static IEnumerable<DataGrid> FindDataGrids(DependencyObject element)
@@ -298,9 +298,10 @@ public partial class MainWindow : Window
         {
             Title = "対象の仕様書・操作手順を読み込む",
             Filter = "テキスト文書 (*.md;*.txt;*.html;*.htm;*.json;*.yaml;*.yml)|*.md;*.txt;*.html;*.htm;*.json;*.yaml;*.yml",
+            Multiselect = true,
             CheckFileExists = true
         };
-        if (dialog.ShowDialog(this) == true) await _viewModel.ReadExplorationDocumentAsync(dialog.FileName);
+        if (dialog.ShowDialog(this) == true) await _viewModel.ReadExplorationDocumentsAsync(dialog.FileNames);
     }
 
     private void ApiRequestSelection_Click(object sender, RoutedEventArgs e) => _viewModel.RefreshSaveState();
@@ -343,7 +344,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"URLをブラウザで開けませんでした。\n{ex.Message}", "ScopePilot",
+            MessageBox.Show(this, $"URLをブラウザで開けませんでした。\n{ex.Message}", "ScopePilot Fork",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -371,7 +372,7 @@ public partial class MainWindow : Window
         if (_viewModel.IsRunning) return;
         if (_viewModel.SelectedRun is null)
         {
-            MessageBox.Show(this, "実行履歴の一覧で削除する探索実行を選択してください。", "ScopePilot", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "実行履歴の一覧で削除する探索実行を選択してください。", "ScopePilot Fork", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         var answer = MessageBox.Show(this,

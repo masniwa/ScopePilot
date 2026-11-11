@@ -34,8 +34,8 @@ if (-not $SkipPublish) {
     if ($LASTEXITCODE -ne 0) { throw 'Automated tests failed.' }
 }
 $artifactsRoot = Join-Path $projectRoot 'artifacts'
-$publishDirectory = Join-Path $artifactsRoot "ScopePilot-$Version-$Runtime"
-foreach ($relative in @('ScopePilot.exe','ScopePilot.dll','VERSION.txt','LICENSE','THIRD-PARTY-NOTICES.md','tools\fast-crawl.js','tools\zap-browser-record.js','tools\playwright-runtime\node_modules\@playwright\mcp\cli.js')) {
+$publishDirectory = Join-Path $artifactsRoot "ScopePilot-Fork-$Version-$Runtime"
+foreach ($relative in @('ScopePilot.exe','ScopePilot.dll','VERSION.txt','LICENSE','THIRD-PARTY-NOTICES.md','tools\fast-crawl.js','tools\crawl-policy.js','tools\capture-ledger.js','tools\wire-capture.js','tools\mcp-tool-filter.js','tools\zap-browser-record.js','tools\playwright-runtime\node_modules\@playwright\mcp\cli.js')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $relative))) { throw "Incomplete payload: $relative" }
 }
 & (Join-Path $PSScriptRoot 'Test-DistributionLicenses.ps1') -PublishDirectory $publishDirectory -Runtime $Runtime -ProjectRoot $projectRoot
@@ -55,7 +55,7 @@ $versionLS = [long]$parsedVersion.Build * 65536
 $architecture = if ($Runtime -eq 'win-arm64') { 'arm64' } else { 'x64compatible' }
 & $IsccPath '/Qp' "/DAppVersion=$Version" "/DRuntime=$Runtime" "/DArchitecture=$architecture" "/DVersionMS=$versionMS" "/DVersionLS=$versionLS" "/DPublishDir=$publishDirectory" "/DArtifactDir=$artifactsRoot" (Join-Path $projectRoot 'installer\ScopePilot.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
-$installerPath = Join-Path $artifactsRoot "ScopePilot-$Version-$Runtime-Setup.exe"
+$installerPath = Join-Path $artifactsRoot "ScopePilot-Fork-$Version-$Runtime-Setup.exe"
 $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$installerPath.sha256" -Encoding ascii -Value "$hash  $([IO.Path]::GetFileName($installerPath))"
 Write-Host "INSTALLER $installerPath"

@@ -1,4 +1,10 @@
-# ScopePilot 0.12.0 配布版
+# ScopePilot Fork 0.13.0 配布版
+
+これはgsgwr/ScopePilotをFork元とする派生版です。原版の公式リリースではありません。[Fork元と主な変更・制限](README.md#forkについて)を確認してください。
+
+配布名は `ScopePilot-Fork-0.13.0-win-x64.zip` / `ScopePilot-Fork-0.13.0-win-x64-Setup.exe`（ARM64は `win-arm64`）です。内部の実行ファイル名は `ScopePilot.exe` です。
+
+アプリ共通設定の `%APPDATA%\ScopePilot\settings.json` とBurpプロキシJARの既定位置は、既存環境との互換性のため元版と共通です。設定変更は元版にも影響します。インストールの分離は設定・案件データの完全な分離を意味しません。
 
 ScopePilot本体はBSD-3-Clauseライセンスです。配布物に含まれる `LICENSE` に再配布条件と免責事項を記載しています。第三者コンポーネントのライセンスは `THIRD-PARTY-NOTICES.md` と各コンポーネントのLICENSE／NOTICEを参照してください。
 
@@ -10,9 +16,9 @@ ARM64版のアプリ本体と.NETランタイムはARM64ネイティブです。
 
 ## インストーラー（推奨）
 
-1. PCに合う `ScopePilot-0.12.0-win-arm64-Setup.exe` または `ScopePilot-0.12.0-win-x64-Setup.exe` を実行します。利用者ごとの導入で管理者権限は不要です。
+1. PCに合う `ScopePilot-Fork-0.13.0-win-arm64-Setup.exe` または `ScopePilot-Fork-0.13.0-win-x64-Setup.exe` を実行します。利用者ごとの導入で管理者権限は不要です。
 2. セットアップの説明を読み、必要ならデスクトップのショートカットを選択してインストールします。
-3. `%LOCALAPPDATA%\Programs\ScopePilot` に導入され、スタートメニューに登録されます。
+3. `%LOCALAPPDATA%\Programs\ScopePilotFork` に導入され、スタートメニューに登録されます。
 4. 完了画面から「初回セットアップガイド」を開き、外部ソフトとMCPの接続を設定します。
 
 Node.js、Microsoft Edge、Codex CLI、Burp本体とBurp MCP拡張は別途準備が必要です。インストーラーは自動ダウンロード、ログイン、証明書登録、Codex設定変更を行いません。
@@ -21,11 +27,11 @@ Node.js、Microsoft Edge、Codex CLI、Burp本体とBurp MCP拡張は別途準�
 
 ### 更新・ポータブル版からの移行
 
-探索を終了し案件を保存してアプリを閉じ、新版のSetup.exeを実行します。既存のインストール先と案件を引き継ぎます。ポータブル版から初めて導入した場合は「MCP接続を設定」を実行してください。0.12.0は古い配置先の登録を検出して更新します。異なる配置先のアプリを同時に利用しないでください。
+探索を終了し案件を保存してアプリを閉じ、新版のSetup.exeを実行します。Fork同士の更新は同じ登録と配置先を使用します。元版ScopePilotとはインストール先・登録ID・ショートカットを分け、元版を上書きしません。既存案件は起動時にプロジェクトフォルダーを選択して開けます。同じ案件を複数アプリで同時編集しないでください。MCP接続を利用する場合は導入先で設定と到達確認を行ってください。
 
 ### アンインストール
 
-Windowsの「設定」→「アプリ」からScopePilotを削除します。利用者が選択したプロジェクトフォルダー内の案件・実行履歴、Codexの設定・認証、外部ソフトは保持します。アンインストール後に不要となったMCP登録の削除は、他の作業への影響を確認したうえで利用者が行ってください。
+Windowsの「設定」→「アプリ」からScopePilot Forkを削除します。利用者が選択したプロジェクトフォルダー内の案件・実行履歴、Codexの設定・認証、外部ソフトは保持します。アンインストール後に不要となったMCP登録の削除は、他の作業への影響を確認したうえで利用者が行ってください。
 
 ## ポータブルZIPの初回起動
 
@@ -52,7 +58,7 @@ Playwright依存関係を `npm ci` で復元し、.NET 10 SDKとInno Setup 6.7.3
 ./scripts/Build-Installer.ps1 -Runtime win-arm64 -IsccPath 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
 
-バージョンはcsprojから取得します。テスト、自己完結型publish、ZIP生成、Setup.exe生成、SHA-256生成を順に実行します。`-SkipPublish` は既に生成した同じ版・CPUの配布フォルダーを再利用し、`-SkipTests` は検証済みのCI工程に限って使用します。GitHub Actionsは両CPU向けにZIPとSetup.exeを成果物に含めます。ARM64・x64は同じプロジェクト形式とインストール先を使用し、同時に別のインストールとして登録しません。
+バージョンはcsprojから取得します。テスト、自己完結型publish、ZIP生成、Setup.exe生成、SHA-256生成を順に実行します。`-SkipPublish` は既に生成した同じ版・CPUの配布フォルダーを再利用し、`-SkipTests` は同一ソースのRelease構成を検証済みの場合に限って使用します。GitHub Actionsは両CPU向けにZIPとSetup.exeを成果物に含めます。ARM64・x64は同じプロジェクト形式とインストール先を使用し、同時に別のインストールとして登録しません。
 
 非対話導入は `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS`、非対話削除はインストール先の `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` を使用します。事前にアプリを終了してください。自動ログは一時フォルダーへ出力され、`/LOG="絶対パス"` でも指定できます。
 

@@ -79,6 +79,7 @@ public sealed partial class MainViewModel : ObservableObject
         OpenDataFolderCommand = new RelayCommand(() => OpenProjectFolder());
         CopyApiRequestCommand = new RelayCommand(CopyApiRequest, () => !IsRunning && SelectedApiRequest is not null);
         ClearExplorationDocumentCommand = new RelayCommand(ClearExplorationDocument, () => !IsRunning && HasExplorationDocument);
+        RemoveExplorationDocumentCommand = new RelayCommand(RemoveExplorationDocument, () => !IsRunning && SelectedExplorationDocument is not null);
     }
 
     public EngagementProject Project
@@ -90,6 +91,8 @@ public sealed partial class MainViewModel : ObservableObject
             if (!SetProperty(ref _project, value)) return;
             RefreshSummary();
             RaisePropertyChanged(nameof(ActiveRole));
+            RaisePropertyChanged(nameof(AiInteractions));
+            RaisePropertyChanged(nameof(CrawlFormSubmissions));
         }
     }
     public ObservableCollection<string> Logs { get; } = [];
@@ -124,9 +127,17 @@ public sealed partial class MainViewModel : ObservableObject
     public RelayCommand OpenDataFolderCommand { get; }
     public RelayCommand CopyApiRequestCommand { get; }
     public RelayCommand ClearExplorationDocumentCommand { get; }
-    public bool HasExplorationDocument => !string.IsNullOrWhiteSpace(Project.ExplorationDocument.Content);
+    public RelayCommand RemoveExplorationDocumentCommand { get; }
+    public IReadOnlyList<ExplorationReferenceDocument> ExplorationDocuments => ExplorationDocumentService.Documents(Project.ExplorationDocument);
+    private ExplorationReferenceDocument? _selectedExplorationDocument;
+    public ExplorationReferenceDocument? SelectedExplorationDocument
+    {
+        get => _selectedExplorationDocument;
+        set { if (SetProperty(ref _selectedExplorationDocument, value)) RemoveExplorationDocumentCommand.RaiseCanExecuteChanged(); }
+    }
+    public bool HasExplorationDocument => ExplorationDocuments.Count > 0;
     public string ExplorationDocumentName => HasExplorationDocument
-        ? $"{Project.ExplorationDocument.FileName}（{Project.ExplorationDocument.Content.Length:N0}文字）" : "ドキュメント未選択";
+        ? $"{ExplorationDocuments.Count}件・{ExplorationDocuments.Sum(x => x.Content.Length):N0}文字：{ExplorationDocumentService.DisplayName(Project.ExplorationDocument)}" : "ドキュメント未選択";
     public int DocProviderIndex
     {
         get => (int)Project.ExplorationDocument.AiProvider;
@@ -336,6 +347,17 @@ public sealed partial class MainViewModel : ObservableObject
             RefreshSaveState();
         }
     }
+    public bool AiInteractions
+    {
+        get => Project.EnableAiInteractions;
+        set
+        {
+            if (Project.EnableAiInteractions == value) return;
+            Project.EnableAiInteractions = value;
+            RaisePropertyChanged();
+            RefreshSaveState();
+        }
+    }
     public string ReviewPageTag => IsApiMode ? "8" : "3";
     public string ReviewNavigationText => IsApiMode ? "3   APIリクエスト" : "3   候補レビュー";
     public string RoleHelpText => IsApiMode ? "選択ロールを生成リクエストへ記録します。認証情報は下書きの置換値を確認して補完してください。"
@@ -398,9 +420,51 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    public async Task ReadExplorationDocumentsAsync(IEnumerable<string> paths)
+    {
+        if (IsRunning) return;
+        try
+        {
+            await EnsureProjectAsync();
+            var current = ExplorationDocuments;
+            var documents = await ExplorationDocumentService.ImportManyAsync(Project, paths, current);
+            if (documents.Count == current.Count) return;
+            SetExplorationDocuments(documents);
+            foreach (var document in documents)
+                if (document.Source is not null && !Project.Inputs.Contains(document.Source)) Project.Inputs.Add(document.Source);
+            await RecordProjectChangeAsync();
+            Log($"探索用資料を追加しました: {ExplorationDocumentName}");
+        }
+        catch (Exception ex)
+        {
+            Log($"探索用資料の読込に失敗しました: {ex.Message}");
+            ShowProjectError?.Invoke($"探索用資料を読み込めませんでした。{Environment.NewLine}{ex.Message}");
+        }
+    }
+
+    private void SetExplorationDocuments(List<ExplorationReferenceDocument> documents)
+    {
+        var settings = Project.ExplorationDocument;
+        settings.Files = documents;
+        settings.FileName = ""; settings.Content = ""; settings.Source = null;
+        settings.Hints = null;
+        SelectedExplorationDocument = null;
+        RefreshModeProperties();
+        RefreshSaveState();
+    }
+
+    private void RemoveExplorationDocument()
+    {
+        var documents = ExplorationDocuments.ToList();
+        if (SelectedExplorationDocument is null || !documents.Remove(SelectedExplorationDocument)) return;
+        SetExplorationDocuments(documents);
+        Log("選択した探索用資料の指定を解除しました。コピー済みの原本は保持します。");
+    }
+
     private void ClearExplorationDocument()
     {
         Project.ExplorationDocument = new();
+        SelectedExplorationDocument = null;
         RefreshModeProperties();
         RefreshSaveState();
         Log("探索で参照するドキュメントの指定を解除しました。");
@@ -427,12 +491,15 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void RefreshModeProperties()
     {
+        if (SelectedExplorationDocument is not null && !ExplorationDocuments.Contains(SelectedExplorationDocument)) SelectedExplorationDocument = null;
         foreach (var name in new[] { nameof(IsApiMode), nameof(ProjectModeIndex), nameof(ExplorationProxyModeIndex), nameof(ApiProviderIndex), nameof(ApiModelOptions), nameof(ApiModelIndex), nameof(ApiModelLabel), nameof(ApiReasoningOptions), nameof(ApiReasoningIndex), nameof(ApiReasoningEnabled), nameof(DocProviderIndex), nameof(DocModelOptions), nameof(DocModelIndex), nameof(DocModelLabel), nameof(DocReasoningOptions), nameof(DocReasoningIndex), nameof(DocReasoningEnabled), nameof(ExplorationAiIndex), nameof(ExplorationAiModelOptions), nameof(ExplorationAiModelIndex), nameof(ExplorationAiModelLabel), nameof(ExplorationAiModelEnabled), nameof(ApiDocumentName), nameof(ExplorationDocumentName), nameof(HasExplorationDocument), nameof(StartActionText),
             nameof(RunModeDescription), nameof(BurpExportActionText), nameof(BurpListHeader), nameof(ApiRequestSummary), nameof(SummaryText), nameof(ReviewPageTag), nameof(ReviewNavigationText), nameof(RoleHelpText), nameof(ActiveRole),
             nameof(ExecutionPageHeader), nameof(ExecutionNavigationText), nameof(ExecutionNextText), nameof(RequestLimitLabel), nameof(BurpPageDescription), nameof(BurpModeDescription), nameof(HandoffDescription) }) RaisePropertyChanged(name);
         RaisePropertyChanged(nameof(Project));
+        RaisePropertyChanged(nameof(ExplorationDocuments));
         SetupMcpCommand.RaiseCanExecuteChanged();
         ClearExplorationDocumentCommand.RaiseCanExecuteChanged();
+        RemoveExplorationDocumentCommand.RaiseCanExecuteChanged();
     }
     public bool IsRunning
     {
@@ -444,6 +511,7 @@ public sealed partial class MainViewModel : ObservableObject
             RaisePropertyChanged(nameof(CanEditExplorationSettings));
             SaveCommand.RaiseCanExecuteChanged();
             ClearExplorationDocumentCommand.RaiseCanExecuteChanged();
+            RemoveExplorationDocumentCommand.RaiseCanExecuteChanged();
             StartExplorationCommand.RaiseCanExecuteChanged();
             NewProjectCommand.RaiseCanExecuteChanged();
             LoadProjectCommand.RaiseCanExecuteChanged();
@@ -1050,7 +1118,7 @@ public sealed partial class MainViewModel : ObservableObject
                 Log($"AI事前分類: 通信{aiInput.TotalRequests:N0}件中、静的アセット・静的画面候補{aiInput.StaticExcluded:N0}件と除外キャッシュ{aiInput.DeferredExcluded:N0}件を対象外とし、採用済み・新規のリクエスト{aiInput.RequestPatternCount:N0}パターン・フォーム{aiInput.FormPatternCount:N0}パターンに集約しました。");
                 if (aiInput.TruncatedPatternCount > 0)
                     Log($"AI入力の上限により{aiInput.TruncatedPatternCount:N0}パターンを省略しました。全件の証跡は実行フォルダーに保持しています。");
-                if (!aiInput.RequiresAi && crawl.ExitCode == 0)
+                if (!aiInput.RequiresAi && !Project.EnableAiInteractions && crawl.ExitCode == 0)
                 {
                     Log($"AIで確認すべき動的パターンがないため、{ExplorationAiName}の画面探索を起動せず完了します。");
                     var fastObservations = Path.Combine(path, "fast-observed-requests.jsonl");
@@ -1149,7 +1217,19 @@ public sealed partial class MainViewModel : ObservableObject
         }
         finally
         {
-            try { await _fastCrawler.CloseAsync(); }
+            try
+            {
+                await _fastCrawler.CloseAsync();
+                if (_currentRunDirectory is not null && File.Exists(Path.Combine(_currentRunDirectory, "capture-summary.json")))
+                {
+                    using var capture = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_currentRunDirectory, "capture-summary.json")));
+                    var c = capture.RootElement;
+                    Log($"通信原本: {c.GetProperty("requests").GetInt32()}要求、{c.GetProperty("responses").GetInt32()}応答、{c.GetProperty("failed").GetInt32()}失敗。観測一覧は代表パターンへ集約しています。");
+                    if (c.GetProperty("bodyErrors").GetInt32() > 0 || c.GetProperty("requestErrors").GetInt32() > 0)
+                        Log($"原本の取得制限: 応答本文 {c.GetProperty("bodyErrors").GetInt32()}件、要求情報 {c.GetProperty("requestErrors").GetInt32()}件。詳細はhttp-transactions.jsonlを確認してください。");
+                    if (!c.GetProperty("complete").GetBoolean()) Project.Status = ProjectStatus.Partial;
+                }
+            }
             catch (Exception ex) { Log($"探索ブラウザの終了に失敗しました: {ex.Message}"); Project.Status = ProjectStatus.Partial; }
             if (proxyMonitorCancellation is not null)
             {
@@ -1210,8 +1290,8 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task EnsureDocumentHintsAsync(CancellationToken token)
     {
         var document = Project.ExplorationDocument;
-        if (string.IsNullOrWhiteSpace(document.Content)) return;
-        var sha = DocumentHintService.Sha256(document.Content);
+        if (ExplorationDocumentService.Documents(document).Count == 0) return;
+        var sha = DocumentHintService.Sha256(ExplorationDocumentService.CombinedContent(document));
         if (DocumentHintService.IsUsable(document.Hints, sha)) return;
         var provider = document.AiProvider;
         if (ApiDocumentAiRunner.FindLaunch(provider) is null)
@@ -1359,7 +1439,7 @@ public sealed partial class MainViewModel : ObservableObject
             var path = Path.Combine(runDirectory, fileName);
             if (File.Exists(path) && new FileInfo(path).Length > 0) recovered += await ImportAsync(path);
         }
-        if (recovered > 0) Log($"技術エラー前に保存された観測データ{recovered:N0}件を部分結果として復旧しました。");
+        if (recovered > 0) Log($"保存済み観測ファイルの延べ{recovered:N0}件を再読み込みしました（重複データは追加しません）。");
         return recovered;
     }
 

@@ -35,6 +35,38 @@ public sealed class ZcodeExplorationRunner
         CancellationToken cancellationToken,
         Action<string>? navigationDetected = null)
     {
+        var result = await RunPassAsync(runDirectory, ai, progress, interventionDetected, cancellationToken, navigationDetected, await ExplorationCoverage.ExecutionAsync(runDirectory, cancellationToken));
+        for (var round = 1; round <= ExplorationCoverage.MaxContinuationRounds + 1 && result.ExitCode == 0 && !result.Cancelled && !result.HumanInterventionPending; round++)
+        {
+            var continuation = await ExplorationCoverage.ContinuationAsync(runDirectory, round, cancellationToken);
+            if (continuation is null) break;
+            progress.Report($"未実行操作を点検し、同じブラウザで追加探索します ({round}/{ExplorationCoverage.MaxContinuationRounds})。");
+            result = await RunPassAsync(runDirectory, ai, progress, interventionDetected, cancellationToken, navigationDetected, continuation);
+            if (result.ExitCode == 0 && !result.Cancelled) await ExplorationCoverage.MergeAsync(runDirectory, round, cancellationToken, ResultFileName);
+        }
+        if (!result.Cancelled)
+        {
+            if (result.ExitCode == 0 && !result.HumanInterventionPending && await ExplorationPhase.FinalizationAsync(runDirectory, cancellationToken) is { } finalization)
+            {
+                progress.Report("通常操作の点検を終え、片付けと許可されたログアウトを別パスで確認します。");
+                try
+                {
+                    result = await RunPassAsync(runDirectory, ai, progress, interventionDetected, cancellationToken, navigationDetected, finalization);
+                    if (result.ExitCode == 0 && !result.Cancelled) await ExplorationCoverage.MergeAsync(runDirectory, ExplorationCoverage.FinalizationRound, cancellationToken, ResultFileName);
+                }
+                finally { await ExplorationPhase.SetAsync(runDirectory, "finished", false, CancellationToken.None); }
+            }
+            var manual = await ExplorationCoverage.WriteManualOperationsAsync(runDirectory, cancellationToken);
+            if (manual > 0) progress.Report($"手動で確認する特殊操作を{manual}件、manual-operations.txtへ保存しました。");
+        }
+        return result;
+    }
+
+    private async Task<ExplorationRunResult> RunPassAsync(
+        string runDirectory, ExplorationAiSettings ai, IProgress<string> progress,
+        Action<string> interventionDetected, CancellationToken cancellationToken,
+        Action<string>? navigationDetected, string? continuation = null)
+    {
         var launch = ApiDocumentAiRunner.FindLaunch(DocumentAiProvider.Glm)
             ?? throw new FileNotFoundException("GLMの画面探索にはzcode CLI（npmグローバル）とnode.jsが必要です。環境チェックを実行してください。");
         var filter = McpToolFilterPath();
@@ -45,7 +77,7 @@ public sealed class ZcodeExplorationRunner
         if (File.Exists(resultPath)) File.Move(resultPath, resultPath + ".previous", true);
 
         await File.WriteAllTextAsync(Path.Combine(runDirectory, PromptFileName),
-            await CodexExplorationRunner.BuildPromptAsync(runDirectory, cancellationToken), new UTF8Encoding(false), cancellationToken);
+            await CodexExplorationRunner.BuildPromptAsync(runDirectory, cancellationToken) + continuation, new UTF8Encoding(false), cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(runDirectory, SettingsFileName),
             await BuildSettingsAsync(runDirectory, launch.FileName, filter), new UTF8Encoding(false), cancellationToken);
         var schema = await File.ReadAllTextAsync(Path.Combine(runDirectory, "result-schema.json"), cancellationToken);
@@ -110,6 +142,8 @@ public sealed class ZcodeExplorationRunner
                 {
                     await File.WriteAllTextAsync(resultPath, result, new UTF8Encoding(false));
                     await File.WriteAllTextAsync(Path.Combine(runDirectory, "exploration-summary.json"), result, new UTF8Encoding(false));
+                    await ExplorationCoverage.SynchronizeInventoryAsync(runDirectory, CancellationToken.None);
+                    await File.WriteAllTextAsync(resultPath, await File.ReadAllTextAsync(Path.Combine(runDirectory, "exploration-summary.json")), new UTF8Encoding(false));
                     if (JsonDocument.Parse(result).RootElement.GetProperty("summary").GetString() is { Length: > 0 } summary)
                         progress.Report(summary);
                 }

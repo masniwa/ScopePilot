@@ -10,7 +10,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $Version) { $Version = ([xml](Get-Content -LiteralPath (Join-Path $projectRoot 'ScopePilot.csproj'))).Project.PropertyGroup.Version }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must contain major.minor.patch only.' }
 $artifactsRoot = Join-Path $projectRoot "artifacts"
-$packageName = "ScopePilot-$Version-$Runtime"
+$packageName = "ScopePilot-Fork-$Version-$Runtime"
 $publishDirectory = Join-Path $artifactsRoot $packageName
 $zipPath = Join-Path $artifactsRoot "$packageName.zip"
 
@@ -28,8 +28,18 @@ if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force 
 New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
 
 & dotnet publish (Join-Path $projectRoot "ScopePilot.csproj") -c Release -r $Runtime --self-contained true `
-    -p:Version=$Version -p:AssemblyVersion="$Version.0" -p:FileVersion="$Version.0" -o $publishDirectory
+    -p:Version=$Version -p:AssemblyVersion="$Version.0" -p:FileVersion="$Version.0" `
+    -p:DebugType=None -p:DebugSymbols=false "-p:PathMap=$projectRoot=/_/ScopePilotFork" -o $publishDirectory
 if ($LASTEXITCODE -ne 0) { throw "Windows publish failed." }
+
+$metadata = (Get-Item -LiteralPath (Join-Path $publishDirectory 'ScopePilot.dll')).VersionInfo
+if ($metadata.ProductName -ne 'ScopePilot Fork' -or $metadata.FileDescription -ne 'ScopePilot Fork' -or
+    $metadata.ProductVersion -ne $Version -or $metadata.FileVersion -ne "$Version.0") {
+    throw 'Published Fork branding/version mismatch.'
+}
+if (Test-Path -LiteralPath (Join-Path $publishDirectory 'ScopePilot.pdb')) { throw 'Do not ship local application debug symbols.' }
+$assemblyText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $publishDirectory 'ScopePilot.dll')))
+if ($assemblyText.Contains($projectRoot)) { throw 'Published assembly contains the local source path.' }
 
 & (Join-Path $PSScriptRoot 'Test-DistributionLicenses.ps1') -PublishDirectory $publishDirectory -Runtime $Runtime -ProjectRoot $projectRoot
 

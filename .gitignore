@@ -27,3 +27,9 @@ exports/
 reports/
 backups/
 outputs/
+temp/
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12

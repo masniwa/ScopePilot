@@ -12,6 +12,11 @@ internal sealed record McpRuntimeServer(string Command, string[] Args, string[] 
 
 public sealed class McpSetupService
 {
+    internal static string[] PlaywrightTools(bool interactions) => interactions
+        ? ["browser_tabs", "browser_snapshot", "browser_navigate", "browser_network_requests", "browser_take_screenshot",
+            "browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_press_key", "browser_handle_dialog", "browser_file_upload",
+            "browser_hover", "browser_drag", "browser_mouse_click_xy", "browser_mouse_drag_xy", "browser_mouse_move_xy", "browser_mouse_down", "browser_mouse_up"]
+        : ["browser_tabs", "browser_snapshot", "browser_navigate", "browser_network_requests", "browser_take_screenshot"];
     public async Task<McpSetupResult> ConfigureAsync(EngagementProject project, ExplorationProxyEndpoint? endpoint = null, string? runDirectory = null)
     {
         var messages = new List<string>();
@@ -44,7 +49,15 @@ public sealed class McpSetupService
             var output = ProjectPaths.Resolve(project, "outputs/playwright");
             Directory.CreateDirectory(output);
             servers["playwright"] = new(node!, [cli, "--cdp-endpoint", cdp, "--ignore-https-errors", "--timeout-action", "15000", "--timeout-navigation", "20000", "--output-dir", output],
-                ["browser_tabs", "browser_snapshot", "browser_navigate", "browser_network_requests", "browser_take_screenshot"]);
+                PlaywrightTools(project.EnableAiInteractions));
+            if (project.EnableAiInteractions)
+            {
+                var uploadRoot = await ExplorationUploadFixture.CreateAsync(runDirectory);
+                var filter = Path.Combine(AppContext.BaseDirectory, "tools", "mcp-tool-filter.js");
+                if (!File.Exists(filter)) throw new FileNotFoundException("MCP filter is required for fixture uploads.", filter);
+                var server = servers["playwright"];
+                servers["playwright"] = new(node!, [filter, "--allow", string.Join(',', server.EnabledTools), "--upload-root", uploadRoot, "--", server.Command, ..server.Args, "--caps", "vision"], server.EnabledTools);
+            }
             messages.Add("[OK] Playwright MCPは現在の探索ブラウザへ接続します。認証セッションを引き継ぎます。");
             var java = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "BurpSuite", "jre", "bin", "java.exe");
             var jar = BurpProxyLocation.Resolve();

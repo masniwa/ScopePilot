@@ -42,6 +42,10 @@ public sealed class ProjectStore
         var project = await JsonSerializer.DeserializeAsync<EngagementProject>(stream, _options)
             ?? throw new InvalidDataException("プロジェクトファイルが空です。");
         if (project.FormatVersion != 1) throw new InvalidDataException("未対応のプロジェクト形式です。");
+        // Repair only the previous untouched default. Custom phrases and an
+        // explicitly empty prohibition list keep their exact meaning.
+        if (project.ForbiddenActions == EngagementProject.LegacyDefaultForbiddenActions)
+            project.ForbiddenActions = EngagementProject.DefaultForbiddenActions;
         project.ProjectFilePath = path;
         ProjectPaths.CheckProjectFile(project);
         project.ApiRequests ??= [];
@@ -51,7 +55,8 @@ public sealed class ProjectStore
         project.ExplorationDocument ??= new();
         project.ExplorationAi ??= new();
         project.ExplorationProxy ??= new();
-        if (project.ExplorationDocument.Source is { } source) _ = ProjectPaths.Resolve(project, source.LocalPath);
+        foreach (var document in ExplorationDocumentService.Documents(project.ExplorationDocument))
+            if (document.Source is { } source) _ = ProjectPaths.Resolve(project, source.LocalPath);
         foreach (var reference in project.Inputs) _ = ProjectPaths.Resolve(project, reference.LocalPath);
         foreach (var verification in project.BrunoVerifications) _ = ProjectPaths.Resolve(project, verification.Exchange.LocalPath);
         foreach (var item in project.ApiRequests)

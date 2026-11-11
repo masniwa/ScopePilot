@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using ScopePilot.Domain;
@@ -154,7 +156,14 @@ public sealed class ZapCliRunner
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
             RedirectStandardError = true, WorkingDirectory = package.Directory
         };
+        // Even -cmd starts a proxy, and ZAP ignores the CLI override -port 0.
+        // Use the same free-loopback-port handoff as the managed daemon.
+        var reservation = new TcpListener(IPAddress.Loopback, 0);
+        int port;
+        try { reservation.Start(); port = ((IPEndPoint)reservation.LocalEndpoint).Port; }
+        finally { reservation.Stop(); }
         foreach (var argument in new[] { "-jar", Path.GetFullPath(settings.ZapJarPath), "-cmd", "-silent",
+            "-host", "127.0.0.1", "-port", port.ToString(),
             "-loglevel", "DEBUG", "-dir", home, action, package.PlanPath }) start.ArgumentList.Add(argument);
         start.Environment["TEMP"] = home;
         start.Environment["TMP"] = home;

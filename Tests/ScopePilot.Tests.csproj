@@ -17,4 +17,9 @@
   </ItemGroup>
   <ItemGroup><ProjectReference Include="..\ScopePilot.csproj" /></ItemGroup>
   <ItemGroup><None Update="crawl-integration.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Update="ai-interaction-integration.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Update="wire-capture-regression.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Update="ui-state-regression.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Update="forbidden-actions-integration.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Update="form-input-integration.cjs" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

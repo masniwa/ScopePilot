@@ -16,19 +16,35 @@ public static partial class AuthenticationFlow
 
     public static bool LooksLikeLogin(string url, string title, bool passwordField, bool userField)
     {
-        var loginPath = Uri.TryCreate(url, UriKind.Absolute, out var uri) && LoginPath().IsMatch(uri.AbsolutePath);
+        var loginPath = Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            (LoginPath().IsMatch(uri.AbsolutePath) || LoginPath().IsMatch(NavigationFragment(uri).Split('?')[0]));
         var loginTitle = LoginText().IsMatch(title);
         return loginPath || loginTitle || (passwordField && userField);
     }
 
     public static void ValidateTarget(EngagementProject project)
     {
-        ApiRequestFormatter.EnsureAllowed(project.StartUrl, project.AllowedOrigins);
+        EnsureNavigationAllowed(project.StartUrl, project.AllowedOrigins);
         if (project.MaxPages < 1 || project.MaxRequests < 1 || project.MaxMinutes < 1)
             throw new InvalidDataException("ページ数・通信数・実行時間の上限は1以上にしてください。");
         if (!string.IsNullOrWhiteSpace(project.AfterAuthenticationUrl))
-            ApiRequestFormatter.EnsureAllowed(project.AfterAuthenticationUrl, project.AllowedOrigins);
+            EnsureNavigationAllowed(project.AfterAuthenticationUrl, project.AllowedOrigins);
     }
+
+    internal static void EnsureNavigationAllowed(string value, string origins)
+    {
+        // A browser fragment selects an SPA screen; it is never an HTTP target.
+        // Keep API request validation strict and apply its scope/credential checks
+        // to the unchanged navigation URL with only its fragment removed.
+        if (string.IsNullOrWhiteSpace(value) || value.Any(char.IsControl) || !Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            throw new InvalidDataException("ブラウザの開始URLが不正です。");
+        if (uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo))
+            throw new InvalidDataException("ブラウザの開始URLは認証情報を含まないhttp/httpsの完全なURLにしてください。");
+        ApiRequestFormatter.EnsureAllowed(new UriBuilder(uri) { Fragment = "" }.Uri.AbsoluteUri, origins);
+    }
+
+    private static string NavigationFragment(Uri uri) => uri.Fragment.StartsWith("#/") ? uri.Fragment[1..] :
+        uri.Fragment.StartsWith("#!/") ? uri.Fragment[2..] : "";
 
     public static HumanInterventionRequest? ParseRequest(string json)
     {
@@ -70,7 +86,8 @@ public static partial class AuthenticationFlow
     }
 
     public static string DisplayUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
-        ? new UriBuilder(uri) { UserName = "", Password = "", Query = "", Fragment = "" }.Uri.GetLeftPart(UriPartial.Path) : "";
+        ? new UriBuilder(uri) { UserName = "", Password = "", Query = "", Fragment = "" }.Uri.GetLeftPart(UriPartial.Path) +
+            (NavigationFragment(uri) is { Length: > 0 } route ? "#" + route.Split('?')[0] : "") : "";
 
     public static string FormatNavigation(string json, EngagementProject project)
     {
@@ -83,14 +100,15 @@ public static partial class AuthenticationFlow
             return "認証画面が残っています。探索ブラウザでログインを完了してください。";
         if (!root.TryGetProperty("authenticatedIndicatorVisible", out var indicator) || indicator.ValueKind != JsonValueKind.True)
             return $"認証後の到達先は未確認: {DisplayUrl(url)}";
-        try { ApiRequestFormatter.EnsureAllowed(url, project.AllowedOrigins); }
+        try { EnsureNavigationAllowed(url, project.AllowedOrigins); }
         catch (InvalidDataException) { return "認証後の到達先が許可Origin外です。対象範囲を確認してください。"; }
         if (!string.IsNullOrWhiteSpace(project.AfterAuthenticationUrl))
         {
             var actual = new Uri(url);
             var expected = new Uri(project.AfterAuthenticationUrl);
             if (!string.Equals(actual.GetLeftPart(UriPartial.Authority), expected.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase) ||
-                actual.AbsolutePath != expected.AbsolutePath || (expected.Query.Length > 0 && actual.Query != expected.Query))
+                actual.AbsolutePath != expected.AbsolutePath || (expected.Query.Length > 0 && actual.Query != expected.Query) ||
+                (expected.Fragment.Length > 0 && NavigationFragment(actual) != NavigationFragment(expected)))
                 return $"指定した認証後の開始URLへ未到達: {DisplayUrl(url)}";
         }
         return $"認証後の到達先: {DisplayUrl(url)}";
