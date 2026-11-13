@@ -143,7 +143,10 @@ public sealed class AuthenticationFlowTests
         Assert.Contains("ロールに関係なくユーザーに認証情報の入力を依頼", prompt);
         Assert.Contains("ユーザー名・パスワードを直接入力", prompt);
         Assert.Contains("再開ボタンはユーザーの操作完了の通知", prompt);
-        Assert.Contains("ログイン前のai-input.jsonにない場合でも", prompt);
+        // Semantic prohibitions move post-login links from the automatic
+        // crawler to AI review; do not promise they were already requested.
+        Assert.Contains("認証後のリンクも自動で送信済みとは限りません", prompt);
+        Assert.Contains("semanticPolicyHandoff", prompt);
         Assert.Contains("認証後にブラウザを再起動したり", prompt);
         Assert.Contains("authentication-navigation.json", prompt);
         using var contract = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(run, "engagement.json")));

@@ -1,8 +1,8 @@
-# ScopePilot Fork 0.13.0 配布版
+# ScopePilot Fork 0.14.0 配布版
 
 これはgsgwr/ScopePilotをFork元とする派生版です。原版の公式リリースではありません。[Fork元と主な変更・制限](README.md#forkについて)を確認してください。
 
-配布名は `ScopePilot-Fork-0.13.0-win-x64.zip` / `ScopePilot-Fork-0.13.0-win-x64-Setup.exe`（ARM64は `win-arm64`）です。内部の実行ファイル名は `ScopePilot.exe` です。
+配布名は `ScopePilot-Fork-0.14.0-win-x64.zip` / `ScopePilot-Fork-0.14.0-win-x64-Setup.exe`（ARM64は `win-arm64`）です。内部の実行ファイル名は `ScopePilot.exe` です。
 
 アプリ共通設定の `%APPDATA%\ScopePilot\settings.json` とBurpプロキシJARの既定位置は、既存環境との互換性のため元版と共通です。設定変更は元版にも影響します。インストールの分離は設定・案件データの完全な分離を意味しません。
 
@@ -16,7 +16,7 @@ ARM64版のアプリ本体と.NETランタイムはARM64ネイティブです。
 
 ## インストーラー（推奨）
 
-1. PCに合う `ScopePilot-Fork-0.13.0-win-arm64-Setup.exe` または `ScopePilot-Fork-0.13.0-win-x64-Setup.exe` を実行します。利用者ごとの導入で管理者権限は不要です。
+1. PCに合う `ScopePilot-Fork-0.14.0-win-arm64-Setup.exe` または `ScopePilot-Fork-0.14.0-win-x64-Setup.exe` を実行します。利用者ごとの導入で管理者権限は不要です。
 2. セットアップの説明を読み、必要ならデスクトップのショートカットを選択してインストールします。
 3. `%LOCALAPPDATA%\Programs\ScopePilotFork` に導入され、スタートメニューに登録されます。
 4. 完了画面から「初回セットアップガイド」を開き、外部ソフトとMCPの接続を設定します。

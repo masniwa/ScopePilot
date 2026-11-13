@@ -15,25 +15,25 @@ git diff --check
 git status --short
 # 変更内容・新規ソース・秘密情報の除外を確認してコミットする
 git add .
-git commit -m "Release ScopePilot Fork 0.13.0"
+git commit -m "Release ScopePilot Fork 0.14.0"
 git push fork HEAD:master
-git tag v0.13.0
-git push fork v0.13.0
+git tag v0.14.0
+git push fork v0.14.0
 ```
 
 この版は原版の3fe8748b3c9225c61b0d60c5ec9ad640ecf2fbacをベースとし、確認時のgsgwr/masterより後の上流8コミットを含みます。古いgsgwrのコミットへresetして変更を失わないようにしてください。公開先に独自変更がある場合は差分を確認して統合し、force pushしません。
 
 ## ビルドとRelease
 
-.NET 10 SDK、Node.js 24、Inno Setup 6.7.3以降を用意します。`tools/playwright-runtime`で`npm ci`を実行します。`scripts/Build-Installer.ps1`でwin-x64 / win-arm64をそれぞれ生成できます。バージョンはScopePilot.csprojの0.13.0を使用します。操作の詳細はDISTRIBUTION.mdを参照してください。
+.NET 10 SDK、Node.js 24、Inno Setup 6.7.3以降を用意します。`tools/playwright-runtime`で`npm ci`を実行します。`scripts/Build-Installer.ps1`でwin-x64 / win-arm64をそれぞれ生成できます。バージョンはScopePilot.csprojの0.14.0を使用します。操作の詳細はDISTRIBUTION.mdを参照してください。
 
 GitHub ActionsのBuild ScopePilot Forkはmasterへのpush / PRと手動実行に対応し、両CPUのZIP・Setup.exe・SHA-256を成果物へ保存します。Releaseの自動公開は行いません。
 
-Fork先でタグ`v0.13.0`のReleaseを作成し、表示名を`ScopePilot Fork 0.13.0`にします。初回はPre-releaseとして公開し、`docs/RELEASE-NOTES-0.13.0.md`を説明に使用することを推奨します。配布ファイルは次の組です。
+Fork先でタグ`v0.14.0`のReleaseを作成し、表示名を`ScopePilot Fork 0.14.0`にします。初回はPre-releaseとして公開し、`docs/RELEASE-NOTES-0.14.0.md`を説明に使用することを推奨します。配布ファイルは次の組です。
 
-- ScopePilot-Fork-0.13.0-win-x64.zip / .zip.sha256
-- ScopePilot-Fork-0.13.0-win-x64-Setup.exe / .exe.sha256
-- ScopePilot-Fork-0.13.0-win-arm64.zip / .zip.sha256
-- ScopePilot-Fork-0.13.0-win-arm64-Setup.exe / .exe.sha256
+- ScopePilot-Fork-0.14.0-win-x64.zip / .zip.sha256
+- ScopePilot-Fork-0.14.0-win-x64-Setup.exe / .exe.sha256
+- ScopePilot-Fork-0.14.0-win-arm64.zip / .zip.sha256
+- ScopePilot-Fork-0.14.0-win-arm64-Setup.exe / .exe.sha256
 
 案件・認証情報・通信履歴の混入がないこと、ライセンス同梱、版・CPUの一致を確認します。ARM64をx64環境で生成した場合、ビルドと実機起動の確認を区別してください。

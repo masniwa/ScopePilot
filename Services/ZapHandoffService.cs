@@ -84,7 +84,7 @@ public sealed class ZapHandoffService
         {
             // Do not create one giant UTF-16 JSON string for bodies embedded in HAR.
             await using (var output = new FileStream(harPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                await JsonSerializer.SerializeAsync(output, new { log = new { version = "1.2", creator = new { name = "ScopePilot Fork", version = "0.13.0" }, entries } });
+                await JsonSerializer.SerializeAsync(output, new { log = new { version = "1.2", creator = new { name = "ScopePilot Fork", version = "0.14.0" }, entries } });
             await File.WriteAllTextAsync(planPath, CreatePlan(recordedTargets, Math.Clamp(project.MaxMinutes, 1, 120), activeScan, strength, threshold,
                 auth?.Header, auth is null ? null : BuildCookieScope(recordedTargets), scanTuning));
             harEvidence = await ProjectPaths.EvidenceAsync(project, harPath, "har");

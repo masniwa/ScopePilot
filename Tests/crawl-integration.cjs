@@ -102,7 +102,12 @@ let worker, mcp, attached;
   assert.equal(json('browser-runtime.json').status, 'stopped');
   const observations = fs.readFileSync(path.join(run, 'observed-requests.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.ok(observations.some(x => x.url === origin + '/' && x.role === 'User'));
-  assert.ok(observations.some(x => x.method === 'POST' && x.role === '未認証'));
+  assert.ok(observations.some(x => x.method === 'POST' && x.role === '認証状態未確認'));
+  const ledgerRows = fs.readFileSync(path.join(run, 'http-transactions.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(ledgerRows.some(x => x.kind === 'request' && x.method === 'POST' && x.url === origin + '/login' && x.role === '認証状態未確認'));
+  assert.ok(ledgerRows.some(x => x.kind === 'request' && x.url === origin + '/menu' && x.role === '認証状態未確認'), 'post-login requests before resume must not be labeled anonymous');
+  const roleChanges = fs.readFileSync(path.join(run, 'authentication-changes.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(roleChanges.map(x => x.role), ['認証状態未確認', 'User']);
   assert.ok(!JSON.stringify(observations).includes('fixture-password'));
   console.log('PASS: manual login, matching resume, 18 visible features, nested page, skip mutation, same-session MCP, HAR flush');
 

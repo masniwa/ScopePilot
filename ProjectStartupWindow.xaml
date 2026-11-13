@@ -1,5 +1,5 @@
 <Window x:Class="ScopePilot.ProjectStartupWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ScopePilot Fork 0.13.0 — プロジェクトを選択" Width="720" Height="370" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
+        Title="ScopePilot Fork 0.14.0 — プロジェクトを選択" Width="720" Height="370" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource TextPrimary}" FontFamily="Segoe UI, Yu Gothic UI" FontSize="14">
     <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Styles/Controls.xaml" /></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
     <StackPanel Margin="28" Background="{DynamicResource WindowBackground}">

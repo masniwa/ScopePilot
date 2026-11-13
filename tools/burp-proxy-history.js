@@ -28,7 +28,7 @@ async function collect(config){
   function call(method,params){const id=++sequence;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('Burp history lookup timed out'));},30000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
   function texts(result){if(result?.isError)throw Error('Burp refused history lookup');return (result?.content||[]).filter(x=>x.type==='text').map(x=>x.text);}
   try{
-    await call('initialize',{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'ScopePilot history reference',version:'0.13.0'}});notify('notifications/initialized',{});
+    await call('initialize',{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'ScopePilot history reference',version:'0.14.0'}});notify('notifications/initialized',{});
     const listing=await call('tools/list',{});
     // Request-only metadata pages avoid scanning unrelated response bodies.
     // Host regex searches can exhaust the server's global read budget on large

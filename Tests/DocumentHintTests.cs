@@ -15,7 +15,10 @@ public sealed class DocumentHintTests
         var sha = DocumentHintService.Sha256(project.ExplorationDocument.Content);
         var hints = await DocumentHintService.ParseAsync(HintJson(), project, sha);
         Assert.Equal("partial", hints.Status);
-        var endpoint = Assert.Single(hints.Endpoints);
+        Assert.Equal(2, hints.Endpoints.Length);
+        var endpoint = Assert.Single(hints.Endpoints, x => x.Resolution == "absolute");
+        var relative = Assert.Single(hints.Endpoints, x => x.Resolution == "unresolved-relative");
+        Assert.Equal("relative/path", relative.OriginalUrl);
         Assert.Equal("https://example.test/admin/users", endpoint.Url);
         Assert.Equal("admin-page", endpoint.Kind);
         Assert.Equal("high", endpoint.Priority);
@@ -98,8 +101,10 @@ public sealed class DocumentHintTests
         Assert.NotNull(apiPattern.TryGetProperty("documentParameters", out var parameters) && parameters.ValueKind is JsonValueKind.Object ? parameters : null);
         Assert.Equal("page", parameters.GetProperty("Parameters")[0].GetProperty("Name").GetString());
         var documentHints = input.RootElement.GetProperty("documentHints");
-        var endpoint = Assert.Single(documentHints.GetProperty("endpoints").EnumerateArray());
-        Assert.False(endpoint.GetProperty("observed").GetBoolean());
+        var endpoints = documentHints.GetProperty("endpoints").EnumerateArray().ToArray();
+        Assert.Equal(2, endpoints.Length);
+        Assert.All(endpoints, endpoint => Assert.False(endpoint.GetProperty("observed").GetBoolean()));
+        Assert.Contains(endpoints, e => e.GetProperty("Resolution").GetString() == "unresolved-relative");
     }
 
     [Fact]

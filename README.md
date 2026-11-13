@@ -1,10 +1,10 @@
-# ScopePilot Fork 0.13.0
+# ScopePilot Fork 0.14.0
 
 ScopePilot Forkは、受託Web診断の事前探索と診断対象リクエストの整理を支援するWindowsアプリです。
 
 ## Forkについて
 
-この版は [gsgwr/ScopePilot](https://github.com/gsgwr/ScopePilot) をFork元とする派生版です。上流の公式リリースとは別に、**ScopePilot Fork 0.13.0** として配布します。
+この版は [gsgwr/ScopePilot](https://github.com/gsgwr/ScopePilot) をFork元とする派生版です。上流の公式リリースとは別に、**ScopePilot Fork 0.14.0** として配布します。
 
 ### このForkの主な変更
 
@@ -262,7 +262,7 @@ GitHub Actionsでも同じ手順でPlaywright MCPランタイムを復元し、w
 
 配布インストーラーは `./scripts/Build-Installer.ps1` で生成します（Inno Setup 6.7.3以降が必要）。`-Runtime win-arm64` を指定するとWindows ARM64ネイティブ版を生成します。テスト、ZIP、Setup.exe、SHA-256を一括生成します。初回ガイドとPlaywright MCPを同梱し、外部ソフトは利用者が準備します。
 
-0.13.0の成果物名は `ScopePilot-Fork-0.13.0-win-x64.zip` と `ScopePilot-Fork-0.13.0-win-x64-Setup.exe`（ARM64は `win-arm64`）です。Fork先への登録・Release作成の手順は [公開手順](docs/RELEASING.md)、この版の変更点は [リリースノート](docs/RELEASE-NOTES-0.13.0.md) を参照してください。
+0.14.0の成果物名は `ScopePilot-Fork-0.14.0-win-x64.zip` と `ScopePilot-Fork-0.14.0-win-x64-Setup.exe`（ARM64は `win-arm64`）です。Fork先への登録・Release作成の手順は [公開手順](docs/RELEASING.md)、この版の変更点は [リリースノート](docs/RELEASE-NOTES-0.14.0.md) を参照してください。
 
 主要ロジックの自動テストは `dotnet test Tests/ScopePilot.Tests.csproj -c Release` で実行できます。URL代表化、認証ロール、AI入力除外、実行差分、Burp連携、案件レポート、バックアップを検証します。
 
