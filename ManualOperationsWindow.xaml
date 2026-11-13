@@ -1,0 +1,31 @@
+<Window x:Class="ScopePilot.ManualOperationsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ScopePilot Fork 0.13.0 — 手動項目" Width="980" Height="740" MinWidth="720" MinHeight="560" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource TextPrimary}" FontFamily="Segoe UI, Yu Gothic UI" FontSize="14">
+    <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Styles/Controls.xaml" /></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
+    <Grid Margin="20" Background="{DynamicResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="*" MinHeight="100" /><RowDefinition Height="12" /><RowDefinition Height="*" MinHeight="100" /><RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="{Binding Heading}" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8" />
+        <TextBlock Grid.Row="1" Text="{Binding RunDescription}" TextWrapping="Wrap" MaxHeight="45" Margin="0,0,0,8" />
+        <TextBlock x:Name="ManualOperationsStatus" Grid.Row="2" Text="{Binding Message}" TextWrapping="Wrap" Margin="0,0,0,12" />
+        <DataGrid x:Name="ManualOperationsGrid" Grid.Row="3" ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}"
+                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" GridLinesVisibility="Horizontal"
+                  AutomationProperties.Name="選択した実行の手動項目">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="操作" Binding="{Binding Operation}" Width="1.1*" MinWidth="200" />
+                <DataGridTextColumn Header="対象画面" Binding="{Binding Page}" Width="*" MinWidth="200" />
+            </DataGrid.Columns>
+        </DataGrid>
+        <GridSplitter Grid.Row="4" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" HorizontalAlignment="Stretch" VerticalAlignment="Center" Height="5" AutomationProperties.Name="手動一覧と詳細の高さを調整" />
+        <GroupBox Grid.Row="5" Header="理由・確認内容" Margin="0" Padding="10">
+            <TextBox x:Name="ManualOperationDetails" Text="{Binding SelectedDetails, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True"
+                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0" AutomationProperties.Name="手動項目の理由と確認内容" />
+        </GroupBox>
+        <DockPanel Grid.Row="6" Margin="0,12,0,0">
+            <Button DockPanel.Dock="Right" Content="閉じる" Click="Close_Click" IsCancel="True" Margin="0" />
+            <TextBlock Text="手動での確認が必要な操作を、保存された探索結果から表示しています。" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,12,0" />
+        </DockPanel>
+    </Grid>
+</Window>

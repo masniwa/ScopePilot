@@ -56,7 +56,7 @@ public sealed class FastCrawlerRunner
             else navigationDetected?.Invoke(item.Json);
         });
         progress.Report($"高速GETクローラを開始しました (PID {process.Id})。");
-        using var registration = cancellationToken.Register(() => TryStop(process));
+        using var registration = cancellationToken.Register(() => RequestClose(process));
         _output = ReadLinesAsync(process.StandardOutput, line =>
         {
             log.WriteLine(line);
@@ -78,7 +78,14 @@ public sealed class FastCrawlerRunner
             if (interactive && await Task.WhenAny(completed.Task, exited) == completed.Task) exitCode = await completed.Task;
             else { await exited; exitCode = process.ExitCode; }
         }
-        catch (OperationCanceledException) { cancelled = true; TryStop(process); await process.WaitForExitAsync(); exitCode = process.ExitCode; }
+        catch (OperationCanceledException)
+        {
+            cancelled = true;
+            // Cancellation stops discovery, but must not kill Chromium before its
+            // HAR/NetLog and transaction journal have been flushed and reconciled.
+            await CloseAsync();
+            exitCode = -1;
+        }
         if (cancelled || process.HasExited) await CloseAsync();
         var summaryPath = Path.Combine(runDirectory, "fast-crawl-summary.json");
         if (!File.Exists(summaryPath)) return new(cancelled ? -1 : exitCode, cancelled, false);
@@ -97,7 +104,7 @@ public sealed class FastCrawlerRunner
             var requestedClose = !process.HasExited;
             if (requestedClose)
             {
-                try { await process.StandardInput.WriteLineAsync("close"); await process.StandardInput.FlushAsync(); } catch (IOException) { }
+                RequestClose(process);
                 if (!await WaitForCaptureExitAsync(process, _captureProgressPath, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(30), TimeSpan.FromSeconds(1)))
                 {
                     TryStop(process); await process.WaitForExitAsync();
@@ -133,7 +140,21 @@ public sealed class FastCrawlerRunner
         return true;
     }
 
-    public void Stop() { if (_process is { HasExited: false } process) TryStop(process); }
+    public void Stop() { if (_process is { } process) RequestClose(process); }
+
+    private static void RequestClose(Process process)
+    {
+        try
+        {
+            lock (process)
+            {
+                if (process.HasExited) return;
+                process.StandardInput.WriteLine("close");
+                process.StandardInput.Flush();
+            }
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException or ObjectDisposedException) { }
+    }
 
     private static async Task ReadLinesAsync(StreamReader reader, Action<string> handle, CancellationToken token)
     {

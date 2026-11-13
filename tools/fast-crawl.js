@@ -12,6 +12,18 @@ if (!runDirectory) throw Error('run directory is required');
 const interactive = process.argv.includes('--interactive');
 const headless = !interactive || process.argv.includes('--headless');
 const engagement = JSON.parse(fs.readFileSync(path.join(runDirectory, 'engagement.json'), 'utf8'));
+const semanticPolicy = engagement.forbiddenActionPolicy;
+if (semanticPolicy && (semanticPolicy.version !== 1 || semanticPolicy.mode !== 'ai-semantic' || !Array.isArray(semanticPolicy.rules) ||
+    !Array.isArray(engagement.forbiddenActions) || semanticPolicy.rules.length !== engagement.forbiddenActions.length ||
+    semanticPolicy.rules.length > 256 || !semanticPolicy.rules.every((x, index) =>
+      x && x.id === `rule-${index + 1}` && typeof x.text === 'string' && x.text.trim() && x.text.length <= 4000 && x.text === engagement.forbiddenActions[index])))
+  throw Error('Invalid semantic prohibition policy; automatic exploration cannot continue.');
+const semanticReview = !!semanticPolicy?.rules.length;
+// In semantic mode, a word such as "purchase" must not also block purchase
+// history by substring. Only a standalone URL/path remains a literal guard.
+const explicitForbidden = semanticReview
+  ? semanticPolicy.rules.map(x => x.text.trim()).filter(x => /^(?:https?:\/\/|\/)[^\s]+$/i.test(x))
+  : engagement.forbiddenActions || [];
 const proxyRuntime = JSON.parse(fs.readFileSync(path.join(runDirectory, 'exploration-proxy.json'), 'utf8'));
 const proxy = new URL(proxyRuntime.url);
 if (proxy.protocol !== 'http:' || !(proxy.hostname.startsWith('127.') || ['localhost', '[::1]'].includes(proxy.hostname)) || proxy.username || proxy.password || proxy.pathname !== '/' || proxy.search || proxy.hash) throw Error('local HTTP exploration proxy is required');
@@ -30,9 +42,10 @@ const queue = [], queued = new Set(), visited = new Set(), pages = [], coverage 
 let currentRole = '未認証', manualAuthentication = false, authenticationBlocked = false, errorCount = 0, requestCount = 0, failureCode = null;
 // Form submission is opt-in (engagement.crawlFormSubmissions): each selected form is submitted
 // once with harmless placeholder values so its exchange lands in the HAR for review.
-const formSubmissionLimit = engagement.crawlFormSubmissions ? Math.max(1, Math.min(25, maxPages)) : 0;
+const formSubmissionLimit = engagement.crawlFormSubmissions && !semanticReview ? Math.max(1, Math.min(25, maxPages)) : 0;
 const submittedForms = new Set();
-const formSubmissions = { enabled: !!engagement.crawlFormSubmissions, attempted: 0, succeeded: 0, skipped: [] };
+const formSubmissions = { enabled: !!engagement.crawlFormSubmissions, deferredToAi: semanticReview && !!engagement.crawlFormSubmissions, attempted: 0, succeeded: 0, skipped: [] };
+const downloads = [], downloadPages = new Map();
 let formSubmissionWindow = false;
 let crawlComplete = false;
 const aiInteractions = engagement.aiInteractions === true;
@@ -51,11 +64,18 @@ function emit(type, value) { process.stdout.write(type + ' ' + JSON.stringify(va
 function atomic(name, value) { const dest = path.join(runDirectory, name), tmp = dest + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8'); fs.renameSync(tmp, dest); }
 function displayUrl(value) { const u = new URL(value); u.search = ''; u.hash = /^#!?\//.test(u.hash) ? u.hash.split('?')[0] : ''; u.username = ''; u.password = ''; return u.href; }
 function key(url, role = currentRole) { return role + ' ' + url; }
-function enqueue(value, from = '', label = '') {
+function enqueue(value, from = '', label = '', bootstrap = false) {
   let url; try { url = policy.normalizeUrl(value); } catch { return; }
   const k = key(url);
   if (coverage.has(k)) return;
-  const blocked = !allowed.has(new URL(url).origin) ? 'outside-origin' : policy.externalNavigationTarget(url, allowed) || policy.reason(url, label, engagement.forbiddenActions || []);
+  const blocked = !allowed.has(new URL(url).origin) ? 'outside-origin' : policy.externalNavigationTarget(url, allowed) ||
+    (semanticReview ? policy.mutationReason(url, 'GET', explicitForbidden) : policy.reason(url, label, explicitForbidden));
+  if (!blocked && semanticReview && !bootstrap) {
+    // An unreviewed link may itself perform an operation, even with GET.
+    // Preserve the observed target for the AI instead of guessing its meaning.
+    coverage.set(k, { url, role: currentRole, discoveredFrom: from, label: label.slice(0, 160), status: 'deferred-policy', reason: 'semantic-policy-review-required' });
+    return;
+  }
   coverage.set(k, { url, role: currentRole, discoveredFrom: from, label: label.slice(0, 160), status: blocked ? 'skipped' : 'queued', reason: blocked || '' });
   if (blocked) { skipped.push({ url, reason: blocked }); return; }
   queued.add(k); queue.push({ url, role: currentRole });
@@ -78,9 +98,48 @@ function recordNavigation(state, status) {
   const value = { status, actualUrl: displayUrl(state.url), loginFormVisible: policy.isLogin(state), authenticatedIndicatorVisible: state.authenticatedIndicator, activeRole: currentRole, checkedAt: new Date() };
   atomic('authentication-navigation.json', value); emit('NAVIGATION', value);
 }
+function setAuthenticationRole(role, reason) {
+  if (currentRole === role) return;
+  currentRole = role;
+  fs.appendFileSync(path.join(runDirectory, 'authentication-changes.jsonl'), JSON.stringify({ observedAt: new Date().toISOString(), role, reason }) + '\n');
+}
+function observeDownload(download, owner) {
+  const record = { id: downloads.length + 1, url: download.url(), role: currentRole, status: 'download-started', startedAt: new Date().toISOString(), savedByScopePilot: false };
+  downloads.push(record);
+  downloadPages.set(record.id, owner);
+  // Browser completion is separate from the ledger's HTTP body persistence.
+  const append = () => {
+    for (const row of coverage.values()) if (row.downloadId === record.id) row.status = record.status;
+    fs.appendFileSync(path.join(runDirectory, 'download-events.jsonl'), JSON.stringify(record) + '\n');
+  };
+  append();
+  download.failure().then(error => {
+    record.status = error ? 'download-failed' : 'download-completed';
+    record.finishedAt = new Date().toISOString();
+    if (error) record.error = String(error).split('\n')[0];
+    append();
+  }).catch(error => {
+    record.status = 'download-failed'; record.error = String(error.message || error).split('\n')[0];
+    record.finishedAt = new Date().toISOString(); append();
+  });
+}
+async function navigationDownload(url, error, previousDownloadCount, owner) {
+  if (!/Download is starting/i.test(String(error.message || error))) return null;
+  const normalized = policy.normalizeUrl(url);
+  for (let i = 0; i < 10; i++) {
+    const download = downloads.findLast(x => x.id > previousDownloadCount && downloadPages.get(x.id) === owner &&
+      (policy.normalizeUrl(x.url) === normalized || allowed.has(new URL(x.url).origin)));
+    if (download) return download;
+    await sleep(100);
+  }
+  return null;
+}
 async function authenticate(initial) {
   if (!interactive) { authenticationBlocked = true; return null; }
   manualAuthentication = true;
+  // User interaction can establish a session before ScopePilot receives resume.
+  // Do not label requests in that transition as proven anonymous or as the future role.
+  setAuthenticationRole('認証状態未確認', 'manual-authentication-started');
   try {
     while (Date.now() < deadline && !closeRequested) {
       const request = { requestId: crypto.randomUUID(), kind: 'authentication', reason: '認証画面が表示されています。', page: displayUrl(page.url()), instruction: '現在の探索ブラウザへユーザー名・パスワードを直接入力してログインし、ScopePilotで認証後のロールを選んで再開してください。' };
@@ -110,7 +169,7 @@ async function authenticate(initial) {
       fs.rmSync(path.join(runDirectory, 'resume.signal'), { force: true });
       if (!state || !allowed.has(new URL(state.url).origin) || policy.isLogin(state) || !state.authenticatedIndicator) { recordNavigation(state || initial, 'failed'); continue; }
       state = await inspectReady();
-      currentRole = signal.activeRole;
+      setAuthenticationRole(signal.activeRole, 'authenticated-navigation-confirmed');
       for (const [k, r] of [...requests]) if (r.method === 'GET' && r.url === policy.normalizeUrl(state.url)) {
         requests.delete(k); r.role = currentRole; requests.set(`${r.role} ${r.method} ${r.url}`, r);
       }
@@ -132,7 +191,7 @@ async function submitForms(forms, pageUrl) {
     if (submittedForms.size >= formSubmissionLimit) break;
     let actionKey;
     try { actionKey = form.method + ' ' + policy.normalizeUrl(form.action); } catch { continue; }
-    const forbidden = engagement.forbiddenActions || [];
+    const forbidden = explicitForbidden;
     const blocked = policy.reason(form.action, [form.formLabel,form.submitLabel].filter(Boolean).join(' '), forbidden);
     if (blocked) { formSubmissions.skipped.push({ url: form.action, reason: blocked }); continue; }
     if (form.hasPasswordField || form.hasFileField) { formSubmissions.skipped.push({ url: form.action, reason: 'credential-or-upload-form' }); continue; }
@@ -256,30 +315,42 @@ async function main() {
     }
     if (aiInteractions) await context.routeWebSocket('**/*', socket => socket.close());
     {
-      const config = { forbidden: engagement.forbiddenActions || [] };
-      const observe = p => p.on('console', message => {
-        if (message.text().startsWith('[scopepilot-interaction-blocked]'))
-          fs.appendFileSync(path.join(runDirectory, 'blocked-actions.jsonl'), JSON.stringify({ reason: message.text(), observedAt: new Date().toISOString() }) + '\n');
-      });
+      const config = { forbidden: explicitForbidden };
+      const observe = p => {
+        p.on('download', download => observeDownload(download, p));
+        p.on('console', message => {
+          if (message.text().startsWith('[scopepilot-interaction-blocked]'))
+            fs.appendFileSync(path.join(runDirectory, 'blocked-actions.jsonl'), JSON.stringify({ reason: message.text(), observedAt: new Date().toISOString() }) + '\n');
+        });
+      };
       context.on('page', observe);
       for (const p of context.pages()) observe(p);
       // Install before the first navigation. PDF downloads can leave a transient
       // about:blank target whose execution context never becomes ready for evaluate.
       await context.addInitScript(policy.installInteractionGuard, config);
     }
+    // Register before the ledger so the login/logout request itself gets the
+    // transition role, rather than the previously confirmed session role.
+    context.on('request', r => {
+      requestCount++;
+      if (crawlComplete && aiInteractions && /\/(?:login|logout|log-in|log-out|signin|signout|sign-in|sign-out)(?:\/|\?|$)/i.test(r.url()))
+        setAuthenticationRole('認証状態未確認', 'authentication-operation-observed');
+      requestRoles.set(r, currentRole);
+    });
     ledger = capture.attach(context, runDirectory, allowed, () => currentRole);
     await context.route('**/*', async route => {
       const r = route.request(); let u; try { u = new URL(r.url()); } catch { return route.abort('blockedbyclient'); }
       if (closing) { blockedRequest(r, 'capture-closing'); return route.abort('blockedbyclient'); }
       if (!allowed.has(u.origin) && !(manualAuthentication && supporting.has(u.origin))) return route.abort('blockedbyclient');
       // Explicit prohibitions have no crawl, form-submit or authentication bypass.
-      const forbidden = policy.mutationReason(r.url(), r.method(), engagement.forbiddenActions || []);
+      const forbidden = policy.mutationReason(r.url(), r.method(), explicitForbidden);
       if (forbidden) { blockedRequest(r, forbidden); return route.abort('blockedbyclient'); }
       if (r.isNavigationRequest() && policy.externalNavigationTarget(r.url(), manualAuthentication ? new Set([...allowed,...supporting]) : allowed)) {
         blockedRequest(r, 'outside-origin-redirect-link'); return route.abort('blockedbyclient');
       }
       if (requestCount >= maxRequests) return route.abort('blockedbyclient');
       const aiPhase = crawlComplete && aiInteractions;
+      const aiReviewPhase = crawlComplete && (aiInteractions || semanticReview);
       if (aiPhase && engagement.deferLogoutUntilFinalization === true && policy.isLogout(r.url())) {
         let phase;
         try { phase = JSON.parse(fs.readFileSync(path.join(runDirectory, 'exploration-phase.json'), 'utf8')); } catch { }
@@ -288,27 +359,18 @@ async function main() {
           return route.abort('blockedbyclient');
         }
       }
-      if (aiPhase && Date.now() >= runDeadline) { blockedRequest(r, 'time-limit'); return route.abort('blockedbyclient'); }
+      if (aiReviewPhase && Date.now() >= runDeadline) { blockedRequest(r, 'time-limit'); return route.abort('blockedbyclient'); }
       if (!aiPhase && !manualAuthentication && !formSubmissionWindow && !['GET', 'HEAD'].includes(r.method())) {
         blockedRequest(r, 'read-only-mode'); return route.abort('blockedbyclient');
       }
       if (!aiPhase && !manualAuthentication && r.isNavigationRequest() && policy.reason(r.url()) === 'state-changing-link') return route.abort('blockedbyclient');
       if (crawlComplete && policy.isTopLevelNavigation(r) && !visited.has(key(policy.normalizeUrl(r.url())))) {
-        if (!aiPhase) return route.abort('blockedbyclient');
+        if (!aiReviewPhase) return route.abort('blockedbyclient');
         const url = policy.normalizeUrl(r.url());
         if (!aiPages.has(url) && pages.length + aiPages.size >= maxPages) { blockedRequest(r, 'page-limit'); return route.abort('blockedbyclient'); }
         aiPages.add(url);
       }
       return route.continue();
-    });
-    context.on('request', r => {
-      requestCount++;
-      if (crawlComplete && aiInteractions && /\/(?:login|logout|log-in|log-out|signin|signout|sign-in|sign-out)(?:\/|\?|$)/i.test(r.url()))
-      {
-        currentRole = '認証状態未確認';
-        fs.appendFileSync(path.join(runDirectory, 'authentication-changes.jsonl'), JSON.stringify({ observedAt: new Date().toISOString(), role: currentRole }) + '\n');
-      }
-      requestRoles.set(r, currentRole);
     });
     context.on('response', response => {
       const r = response.request(); let url; try { url = policy.normalizeUrl(response.url()); } catch { return; }
@@ -317,7 +379,8 @@ async function main() {
       if (!requests.has(k)) requests.set(k, { method: r.method(), url, statusCode: response.status(), contentType: response.headers()['content-type'] || '', source: 'PlaywrightFastCrawler', role, pageTitle: '', observedAt: new Date().toISOString() });
     });
     page = context.pages()[0] || await context.newPage();
-    enqueue(startUrl); await discoverSitemaps();
+    enqueue(startUrl, '', '', true);
+    if (!semanticReview) await discoverSitemaps();
     // Document-derived crawl targets: the app already filtered them to allowed
     // origins; enqueue() re-applies origin/policy/limit checks like any link.
     for (const target of (engagement.documentHints && engagement.documentHints.crawlTargets) || [])
@@ -326,6 +389,7 @@ async function main() {
       const item = queue.shift(), k = key(item.url, item.role);
       if (visited.has(k)) continue;
       const row = coverage.get(k);
+      const previousDownloadCount = downloads.length, navigationPage = page;
       try {
         const response = await page.goto(item.url === startUrl && !pages.length ? initialNavigationUrl : item.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
         let state = await inspectReady();
@@ -357,10 +421,19 @@ async function main() {
         const r = requests.get(`${currentRole} GET ${url}`);
         if (r) { r.pageTitle = state.title; r.pageInspected = true; r.formCount = state.forms.length; r.formFieldNames = [...new Set(state.forms.flatMap(f => f.fields))].slice(0, 50); }
         for (const link of state.links) enqueue(link.url, url, link.label);
+        if (semanticReview && formSubmissions.enabled && !policy.isLogin(state))
+          for (const form of state.forms) formSubmissions.skipped.push({ url: form.action, reason: 'semantic-policy-review-required' });
         if (formSubmissionLimit && !policy.isLogin(state)) await submitForms(state.forms, url);
         persist();
         process.stdout.write(`PAGE ${pages.length}/${maxPages} REQUESTS ${requests.size}/${maxRequests} QUEUED ${queue.length} ${displayUrl(url)}\n`);
       } catch (error) {
+        const download = await navigationDownload(item.url, error, previousDownloadCount, navigationPage);
+        if (download) {
+          visited.add(k); row.status = download.status; row.downloadId = download.id;
+          row.statusCode = [...requests.values()].findLast(r => r.method === 'GET' && r.url === policy.normalizeUrl(download.url))?.statusCode;
+          pages.push({ url: item.url, requestedUrl: item.url, role: currentRole, statusCode: row.statusCode, navigationKind: 'download', downloadId: download.id });
+          persist(); process.stdout.write(`DOWNLOAD ${displayUrl(item.url)} ${download.status}\n`); continue;
+        }
         errorCount++; row.status = 'error'; row.reason = String(error.message || error).split('\n')[0]; skipped.push({ url: item.url, reason: row.reason });
         process.stdout.write(`SKIP ${displayUrl(item.url)} ${row.reason}\n`);
         if (!pages.length && /ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED|ECONNREFUSED/i.test(row.reason)) { failureCode = 'proxy-unavailable'; break; }
@@ -368,8 +441,14 @@ async function main() {
     }
     persist();
     const stoppedBy = authenticationBlocked ? 'authentication-required' : closeRequested ? 'cancelled' : Date.now() >= deadline ? 'time-limit' : pages.length >= maxPages ? 'page-limit' : requestCount >= maxRequests ? 'request-limit' : 'queue-empty';
-    const status = policy.outcome({ pages: pages.length, authenticationBlocked, errors: errorCount, remaining: queue.length, limit: stoppedBy !== 'queue-empty' });
-    const summary = { status, failureCode, startedAt, finishedAt: new Date(), visitedPageCount: pages.length, discoveredUrlCount: queued.size, observedRequestCount: requests.size, actualRequestCount: requestCount, remainingQueueCount: queue.length, skippedCount: skipped.length, stoppedBy, activeRole: currentRole, authenticationBlocked, formSubmissions, pages, skipped: skipped.slice(0, 1000) };
+    const incompleteDownloads = downloads.filter(x => x.status !== 'download-completed').length;
+    const status = policy.outcome({ pages: pages.length, authenticationBlocked, errors: errorCount + incompleteDownloads, remaining: queue.length, limit: stoppedBy !== 'queue-empty' });
+    const semanticPolicyHandoff = semanticReview ? {
+      requiresAi: true, bootstrapOnly: true,
+      explanation: '開始画面・認証到達のみ確認済み。以降の遷移・入力・送信は、禁止文の意味をAIが判断してから実行します。',
+      deferredTargets: [...coverage.values()].filter(x => x.status === 'deferred-policy').slice(0, 1000)
+    } : null;
+    const summary = { status, failureCode, startedAt, finishedAt: new Date(), visitedPageCount: pages.length, discoveredUrlCount: queued.size, observedRequestCount: requests.size, actualRequestCount: requestCount, remainingQueueCount: queue.length, skippedCount: skipped.length, stoppedBy, activeRole: currentRole, authenticationBlocked, semanticPolicyHandoff, formSubmissions, downloads, pages, skipped: skipped.slice(0, 1000) };
     atomic('fast-crawl-summary.json', summary);
     crawlComplete = true;
     if (interactive) { emit('CRAWL_DONE', { exitCode: failureCode || !pages.length ? 2 : 0 }); await closeSignal; }

@@ -13,22 +13,29 @@ public static partial class UrlPatternNormalizer
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
             .Select(NormalizeSegment);
         var path = "/" + string.Join('/', segments);
-        var queryKeys = uri.Query.TrimStart('?')
+        var queryPairs = uri.Query.TrimStart('?')
             .Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .Select(x => Uri.UnescapeDataString(x.Split('=', 2)[0]))
-            .Where(x => !string.IsNullOrWhiteSpace(x) && (ignoredQueryKeys is null || !ignoredQueryKeys.Contains(x)))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Split('=', 2))
+            .Select(x => (Name: Uri.UnescapeDataString(x[0].Replace('+', ' ')), Value: x.Length > 1 ? Uri.UnescapeDataString(x[1].Replace('+', ' ')) : ""))
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name) && (ignoredQueryKeys is null || !ignoredQueryKeys.Contains(x.Name)))
+            .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(group => RequestOperationIdentity.IsSelector(group.Key)
+                ? group.Select(x => group.Key + "=" + Uri.EscapeDataString(x.Value))
+                : [group.Key + "={value}"])
             .ToArray();
         return uri.GetLeftPart(UriPartial.Authority).ToLowerInvariant() + path +
-               (queryKeys.Length > 0 ? $"?{string.Join('&', queryKeys.Select(x => x + "={value}"))}" : string.Empty);
+               (queryPairs.Length > 0 ? $"?{string.Join('&', queryPairs)}" : string.Empty);
     }
 
     public static string NormalizeForSelection(string value) => Normalize(value, CacheQueryKeys);
 
     public static string NormalizeSegment(string value)
     {
-        var segment = Uri.UnescapeDataString(value).ToLowerInvariant();
+        // URL paths are case-sensitive. Preserve escaped static segments as well:
+        // decoding %2F here would turn part of one segment into a path separator.
+        var segment = Regex.Replace(value, "%7B(guid|date|id|value)%7D", match => "{" + match.Groups[1].Value.ToLowerInvariant() + "}",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (Guid.TryParse(segment, out _)) return "{guid}";
         if (PureId().IsMatch(segment)) return "{id}";
 

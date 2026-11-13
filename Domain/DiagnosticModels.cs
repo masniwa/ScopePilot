@@ -1,6 +1,6 @@
 namespace ScopePilot.Domain;
 
-public enum HandoffTarget { BurpSuite, Zap }
+public enum HandoffTarget { BurpSuite, Zap, BurpMcpAiPrompt }
 public enum DiagnosisState
 {
     TargetAlertEffectUnconfirmed = 5

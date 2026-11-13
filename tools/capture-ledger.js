@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { readJsonFile, writeJsonAtomic, fileIdentity } = require('./har-json');
 function attach(context, directory, allowed, role) {
   const ids = new WeakMap(), active = new Set(), tasks = new Set();
   let sequence = 0, responses = 0, failed = 0, bodyErrors = 0, requestErrors = 0;
@@ -60,7 +61,7 @@ function attach(context, directory, allowed, role) {
 }
 function auditHar(directory, harPath, allowed) {
   const rows = fs.readFileSync(path.join(directory,'http-transactions.jsonl'),'utf8').split('\n').filter(Boolean).map(JSON.parse).filter(r=>r.kind==='request');
-  const har=JSON.parse(fs.readFileSync(harPath,'utf8'));
+  const har=readJsonFile(harPath);
   const entries=har.log.entries.filter(e=>allowed.has(new URL(e.request.url).origin));
   const groups=new Map();
   const key = r=>JSON.stringify([r.method.toUpperCase(),r.url]);
@@ -68,15 +69,19 @@ function auditHar(directory, harPath, allowed) {
   const missingIds=[];
   for(const row of rows){const indexes=groups.get(key(row));if(indexes?.length)indexes.shift();else missingIds.push(row.id);}
   const extraHarEntries=[...groups.values()].flat();
-  const audit={transactions:rows.length,harRequests:entries.length,matched:rows.length-missingIds.length,missingIds,extraHarEntries,complete:missingIds.length===0 && extraHarEntries.length===0};
-  fs.writeFileSync(path.join(directory,'capture-audit.json'),JSON.stringify(audit,null,2));return audit;
+  const stage=har.log._scopepilotReconciliation?.stage==='wire-complete'?'wire':'browser';
+  const audit={stage,scope:'request-multiplicity',transactions:rows.length,harRequests:entries.length,matched:rows.length-missingIds.length,missingIds,extraHarEntries,complete:missingIds.length===0 && extraHarEntries.length===0,
+    har:{fileName:path.basename(harPath),...fileIdentity(harPath)},journalBytes:fs.statSync(path.join(directory,'http-transactions.jsonl')).size,finishedAt:new Date().toISOString()};
+  writeJsonAtomic(path.join(directory,'capture-audit.json'),audit);
+  if(stage==='browser')writeJsonAtomic(path.join(directory,'browser-capture-audit.json'),audit);
+  return audit;
 }
 // Chromium can omit an in-flight request when the context closes. Retain the
 // browser event as an attempt; only NetLog can establish that it was sent.
 // Do not invent a response, failure or completion for an unresolved attempt.
 function restoreMissingHarEntries(directory, harPath, allowed) {
   const rows=fs.readFileSync(path.join(directory,'http-transactions.jsonl'),'utf8').split('\n').filter(Boolean).map(JSON.parse);
-  const har=JSON.parse(fs.readFileSync(harPath,'utf8')), queues=new Map();
+  const har=readJsonFile(harPath), queues=new Map();
   const key=r=>JSON.stringify([r.method.toUpperCase(),r.url]);
   for(const entry of har.log.entries){const k=key(entry.request);queues.set(k,(queues.get(k)||0)+1);}
   const added=[];
@@ -94,12 +99,14 @@ function restoreMissingHarEntries(directory, harPath, allowed) {
       request:{method:request.method,url:request.url,httpVersion:'',cookies:[],headers:headers(details?.headers||request.headers),queryString:[...new URL(request.url).searchParams].map(([name,value])=>({name,value})),headersSize:-1,bodySize:details?.bodyMissing?-1:body.length,...(request.postDataAvailable?{postData:{mimeType:(details?.headers||request.headers)?.['content-type']||'',text:body.toString('utf8'),_scopepilotBase64:body.toString('base64')}}:{})},
       response:{status:response?.status??-1,statusText:'',httpVersion:'',cookies:[],headers:headers(response?.headers),content,redirectURL:response?.headers?.location||'',headersSize:-1,bodySize:response?.bytes??-1,...(failure?{_failureText:failure.error}:{})},
       cache:{},timings:{send:-1,wait:-1,receive:-1},
+      _scopepilotRole:request.role||'認証状態未確認',
       _scopepilotJournal:{id:request.id,source:'PlaywrightBrowserEvent',transmissionInferred:false,terminalRecorded:related.some(r=>['finished','failed'].includes(r.kind))}};
     har.log.entries.push(entry);added.push(request.id);
   }
   if(added.length){
-    fs.copyFileSync(harPath,path.join(directory,'browser-capture.original.har'));
-    fs.writeFileSync(harPath,JSON.stringify(har));
+    const original=path.join(directory,'browser-capture.original.har');
+    if(!fs.existsSync(original))fs.copyFileSync(harPath,original,fs.constants.COPYFILE_EXCL);
+    writeJsonAtomic(harPath,har);
   }
   fs.writeFileSync(path.join(directory,'browser-har-restoration.json'),JSON.stringify({addedIds:added,source:'http-transactions.jsonl',transmissionInferred:false},null,2));
   return added;

@@ -94,6 +94,7 @@ public sealed partial class MainViewModel
     {
         UpdateRoleOptions();
         CandidateSearch = "";
+        ResetPriorityBulkStatus();
         SetCandidateReviewFilter("すべて");
         ResetBurpHandoff();
         _currentRunDirectory = null;
@@ -106,6 +107,13 @@ public sealed partial class MainViewModel
         Logs.Clear();
         RefreshFilteredCandidates();
         await RefreshRunHistoryAsync();
+        var latestCapture = RunHistory.FirstOrDefault(run => run.Tool == "ScopePilot" && run.Mode == InputMode.WebExploration &&
+            File.Exists(Path.Combine(run.Directory, "capture-summary.json")));
+        if (latestCapture is not null && Project.Status is ProjectStatus.Ready or ProjectStatus.ReviewReady or ProjectStatus.Partial)
+        {
+            var integrity = await RunCaptureIntegrity.CheckAsync(latestCapture.Directory);
+            if (!integrity.Complete) { Project.Status = ProjectStatus.Partial; Log(integrity.Message); }
+        }
         await RefreshDataSummaryAsync();
         _savedProjectSnapshot = _store.Snapshot(Project);
         RefreshSaveState();
@@ -113,6 +121,7 @@ public sealed partial class MainViewModel
         RaisePropertyChanged(nameof(HandoffTargetIndex));
         RaisePropertyChanged(nameof(IsZapTarget));
         RaisePropertyChanged(nameof(IsBurpTarget));
+        RaisePropertyChanged(nameof(IsBurpAiPromptTarget));
         ZapActiveScanConfirmation = "";
         RaisePropertyChanged(nameof(ZapActiveScanEnabled));
         RaisePropertyChanged(nameof(HandoffDescription));

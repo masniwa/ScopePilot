@@ -155,6 +155,20 @@ public sealed class RunHistoryService
             else if (fast is not null) status = ReadString(fast, "status") is "completed" ? "crawled" : ReadString(fast, "status") is "partial" ? "partial" : "failed";
             else status = "prepared";
         }
+        var capture = await ReadJsonAsync(Path.Combine(directory.FullName, "capture-summary.json"));
+        if (capture is not null)
+        {
+            var wire = await ReadJsonAsync(Path.Combine(directory.FullName, "wire-capture-summary.json"));
+            var audit = await ReadJsonAsync(Path.Combine(directory.FullName, "capture-audit.json"));
+            bool Complete(JsonElement? root) => root is { ValueKind: JsonValueKind.Object } item &&
+                item.TryGetProperty("complete", out var value) && value.ValueKind == JsonValueKind.True;
+            if (!File.Exists(Path.Combine(directory.FullName, "fast-capture.har")) || ReadString(wire, "stage") != "reconciled" ||
+                ReadString(audit, "stage") != "wire" || !Complete(capture) || !Complete(wire) || !Complete(audit))
+            {
+                if (status is "completed" or "crawled") status = "partial";
+                limitations += (limitations.Length > 0 ? Environment.NewLine : "") + "最終HAR保存・wire監査が未完了、または本文/要求に取得制約があります。補完前の監査を最終成功とは扱いません。";
+            }
+        }
         if (string.IsNullOrWhiteSpace(summary)) summary = status switch
         {
             "prepared" => "探索パッケージを生成済みです。",
@@ -242,7 +256,7 @@ public sealed class RunHistoryService
                     var request = JsonSerializer.Deserialize<ObservedRequest>(line, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (request is null || string.IsNullOrWhiteSpace(request.Url)) continue;
                     var method = string.IsNullOrWhiteSpace(request.Method) ? "GET" : request.Method.ToUpperInvariant();
-                    var pattern = UrlPatternNormalizer.NormalizeForSelection(request.Url);
+                    var pattern = RequestOperationIdentity.Pattern(request)[(method.Length + 1)..];
                     var role = request.Role?.Trim() ?? string.Empty;
                     var key = $"{method}\n{pattern}\n{role}";
                     var item = new RunPattern(method, pattern, role);

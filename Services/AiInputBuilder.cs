@@ -60,7 +60,7 @@ public sealed class AiInputBuilder
         }
 
         var requestGroups = selectedRequests
-            .GroupBy(x => RequestPattern(x.Request), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(x => RequestPattern(x.Request), StringComparer.Ordinal)
             .Select(group =>
             {
                 var first = group.First();
@@ -151,7 +151,7 @@ public sealed class AiInputBuilder
                 limitations = hints.Limitations,
                 endpoints = hints.Endpoints.Select(e => new
                 {
-                    e.Url, e.Kind, e.Priority, e.Reason, e.SourceReference,
+                    e.Url, e.OriginalUrl, e.Resolution, e.IsTemplate, e.Kind, e.Priority, e.Reason, e.SourceReference,
                     observed = observedPaths.Contains(UrlPath(e.Url))
                 }).ToArray()
             },
@@ -342,7 +342,7 @@ public sealed class AiInputBuilder
         return forms;
     }
 
-    private static string RequestPattern(ObservedRequest request) => $"{request.Method.ToUpperInvariant()} {NormalizeUrl(request.Url)}";
+    private static string RequestPattern(ObservedRequest request) => RequestOperationIdentity.Pattern(request);
 
     private static string NormalizeUrl(string value)
     {

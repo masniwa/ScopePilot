@@ -63,7 +63,7 @@ public sealed partial class MainViewModel : ObservableObject
         StartExplorationCommand = new AsyncRelayCommand(StartExplorationAsync, () => !IsRunning);
         StopExplorationCommand = new RelayCommand(StopExploration, () => IsRunning && !IsWordConversionRunning);
         ResumeExplorationCommand = new RelayCommand(ResumeExploration, () => IsRunning && Project.Status == ProjectStatus.WaitingForHuman);
-        GenerateCandidatesCommand = new RelayCommand(GenerateCandidates);
+        GenerateCandidatesCommand = new AsyncRelayCommand(RecalculateCandidatePrioritiesAsync, () => !IsRunning);
         ResetCandidateDecisionsCommand = new AsyncRelayCommand(ResetCandidateDecisionsAsync, () => !IsRunning);
         ShowAllCandidatesCommand = new RelayCommand(() => SetCandidateReviewFilter("すべて"));
         ShowSelectedCandidatesCommand = new RelayCommand(() => SetCandidateReviewFilter("採用"));
@@ -111,7 +111,7 @@ public sealed partial class MainViewModel : ObservableObject
     public AsyncRelayCommand StartExplorationCommand { get; }
     public RelayCommand StopExplorationCommand { get; }
     public RelayCommand ResumeExplorationCommand { get; }
-    public RelayCommand GenerateCandidatesCommand { get; }
+    public AsyncRelayCommand GenerateCandidatesCommand { get; }
     public AsyncRelayCommand ResetCandidateDecisionsCommand { get; }
     public RelayCommand ShowAllCandidatesCommand { get; }
     public RelayCommand ShowSelectedCandidatesCommand { get; }
@@ -365,7 +365,7 @@ public sealed partial class MainViewModel : ObservableObject
     public string RunModeDescription => IsApiMode
         ? "読み込んだAPIドキュメントをAIで解釈し、未送信のリクエストを作成します。［APIリクエスト］で仮値と本文を確認・編集して採用してください。"
         : "まず高速クローラで収集し、動的な代表パターンをAIで確認します。案件設定で選択した仕様書・操作手順もAIが参照します。ログインなどの手動操作が必要になったら、ここに案内が表示されます。";
-    public string BurpExportActionText => IsZapTarget ? "ZAPパッケージを出力" : IsApiMode ? "HTTPリクエストを出力" : "Scope出力を生成";
+    public string BurpExportActionText => IsBurpAiPromptTarget ? "プロンプトを生成" : IsZapTarget ? "ZAPパッケージを出力" : IsApiMode ? "HTTPリクエストを出力" : "Scope出力を生成";
     public string BurpListHeader => IsApiMode ? "Burp RepeaterへのHTTPリクエスト出力" : "登録用URL正規表現";
     public string BurpPageDescription => IsApiMode ? "採用したAPIリクエストをHTTPテキストとして出力し、Burp Repeaterへ貼り付けます。"
         : "採用した候補を出力し、Burp SuiteのScopeへ登録します。";
@@ -519,6 +519,11 @@ public sealed partial class MainViewModel : ObservableObject
             StopExplorationCommand.RaiseCanExecuteChanged();
             ResumeExplorationCommand.RaiseCanExecuteChanged();
             ResetCandidateDecisionsCommand.RaiseCanExecuteChanged();
+            GenerateCandidatesCommand.RaiseCanExecuteChanged();
+            AdoptTopPriorityCommand.RaiseCanExecuteChanged();
+            AdoptMinimumPriorityCommand.RaiseCanExecuteChanged();
+            LinkBurpHistoryCommand.RaiseCanExecuteChanged();
+            CopyBurpAiPromptCommand.RaiseCanExecuteChanged();
             AdoptVisibleCandidatesCommand.RaiseCanExecuteChanged();
             ExcludeVisibleCandidatesCommand.RaiseCanExecuteChanged();
             ExportBurpScopeCommand.RaiseCanExecuteChanged();
@@ -530,6 +535,7 @@ public sealed partial class MainViewModel : ObservableObject
             StartZapCommand.RaiseCanExecuteChanged();
             PrepareZapAddonsCommand.RaiseCanExecuteChanged();
             RecordZapBrowserCommand.RaiseCanExecuteChanged();
+            RaisePropertyChanged(nameof(CanViewManualOperations));
         }
     }
     public string InterventionText { get => _interventionText; private set => SetProperty(ref _interventionText, value); }
@@ -541,6 +547,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (!SetProperty(ref _selectedRun, value)) return;
             OpenRunFolderCommand.RaiseCanExecuteChanged();
             RetrySelectedRunCommand.RaiseCanExecuteChanged();
+            RaisePropertyChanged(nameof(CanViewManualOperations));
         }
     }
     public DiagnosticCandidate? SelectedCandidate { get => _selectedCandidate; set => SetProperty(ref _selectedCandidate, value); }
@@ -628,6 +635,7 @@ public sealed partial class MainViewModel : ObservableObject
             ? $"候補の採用を変更しました（未保存）: {candidate.Pattern}"
             : $"候補の除外を変更しました（未保存）: {candidate.Pattern}");
         RefreshFilteredCandidates();
+        RefreshSummary();
     }
 
     private void SetCandidateReviewFilter(string filter)
@@ -650,10 +658,11 @@ public sealed partial class MainViewModel : ObservableObject
             query = query.Where(x => new[] { x.Pattern, x.Representative.Url, x.Category, x.Reason, x.DiagnosticCaution, x.Representative.Role }
                 .Any(value => value?.Contains(search, StringComparison.OrdinalIgnoreCase) == true));
         FilteredCandidates.Clear();
-        foreach (var candidate in query) FilteredCandidates.Add(candidate);
+        foreach (var candidate in query.OrderByDescending(x => x.Priority).ThenBy(x => x.Pattern, StringComparer.Ordinal)) FilteredCandidates.Add(candidate);
         if (SelectedCandidate is null || !FilteredCandidates.Contains(SelectedCandidate))
             SelectedCandidate = FilteredCandidates.FirstOrDefault();
         RaisePropertyChanged(nameof(CandidateFilterSummary));
+        RefreshBurpAiPrompt();
         AdoptVisibleCandidatesCommand.RaiseCanExecuteChanged();
         ExcludeVisibleCandidatesCommand.RaiseCanExecuteChanged();
     }
@@ -876,16 +885,19 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static void MergeObservation(ObservedRequest existing, ObservedRequest incoming)
     {
+        var useIncomingEvent = incoming.ObservedAt >= existing.ObservedAt &&
+            (!string.IsNullOrEmpty(incoming.RequestFingerprint) || string.IsNullOrEmpty(existing.RequestFingerprint));
+        RequestContentSummary.Merge(existing, incoming);
         existing.PageInspected |= incoming.PageInspected;
         existing.FormCount = Math.Max(existing.FormCount, incoming.FormCount);
         existing.FormFieldNames = existing.FormFieldNames.Concat(incoming.FormFieldNames)
             .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (incoming.StatusCode.HasValue) existing.StatusCode = incoming.StatusCode;
-        if (!string.IsNullOrWhiteSpace(incoming.ContentType)) existing.ContentType = incoming.ContentType;
+        if (useIncomingEvent && incoming.StatusCode.HasValue) existing.StatusCode = incoming.StatusCode;
+        if (useIncomingEvent && !string.IsNullOrWhiteSpace(incoming.ContentType)) existing.ContentType = incoming.ContentType;
         if (!string.IsNullOrWhiteSpace(incoming.PageTitle)) existing.PageTitle = incoming.PageTitle;
         if (!string.IsNullOrWhiteSpace(incoming.Source)) existing.Source = incoming.Source;
         if (!string.IsNullOrWhiteSpace(incoming.Role)) existing.Role = incoming.Role;
-        if (incoming.ObservedAt > existing.ObservedAt) existing.ObservedAt = incoming.ObservedAt;
+        if (useIncomingEvent) existing.ObservedAt = incoming.ObservedAt;
     }
 
     private async Task CheckEnvironmentAsync()
@@ -1070,7 +1082,9 @@ public sealed partial class MainViewModel : ObservableObject
                 _runCancellation?.Cancel();
             }, proxyMonitorCancellation.Token);
             _runCancellation.Token.ThrowIfCancellationRequested();
-            SetRunProgress("高速クロール", 10, "開始URLから同一Originのリンクを巡回しています。");
+            SetRunProgress("高速クロール", 10, string.IsNullOrWhiteSpace(Project.ForbiddenActions)
+                ? "開始URLから同一Originのリンクを巡回しています。"
+                : "開始画面と認証到達を確認しています。以降の操作はAIが禁止文の意味を判断します。");
             var crawl = await _fastCrawler.RunAsync(path, progress, _runCancellation.Token, OnInterventionDetected, OnAuthenticationNavigationDetected);
             if (!crawl.Cancelled && !crawl.ProxyUnavailable && crawl.ExitCode != 0)
             {
@@ -1096,7 +1110,9 @@ public sealed partial class MainViewModel : ObservableObject
             if (crawl.ExitCode != 0)
                 Log($"高速クローラが再試行後も終了コード {crawl.ExitCode} で停止しました。取得済みデータを整理し、{ExplorationAiName}の画面探索へフォールバックします。");
             else
-                Log(crawl.Status == "completed" ? "通常のリンク巡回が完了しました。AI対象を分類します。" : "リンク巡回は部分結果です。未到達・認証・上限の記録を確認してください。");
+                Log(crawl.Status == "completed"
+                    ? string.IsNullOrWhiteSpace(Project.ForbiddenActions) ? "通常のリンク巡回が完了しました。AI対象を分類します。" : "開始画面と認証到達を確認しました。以降の遷移・入力はAIの禁止条件判断へ引き継ぎます。"
+                    : "リンク巡回は部分結果です。未到達・認証・上限の記録を確認してください。");
             if (crawl.AuthenticationBlocked) { Project.Status = ProjectStatus.Partial; await RecoverPartialObservationsAsync(path); return; }
             if (crawl.ExitCode != 0) { Project.Status = ProjectStatus.Failed; return; }
             var setup = await _mcpSetup.ConfigureAsync(Project, proxy.Endpoint, path);
@@ -1118,7 +1134,7 @@ public sealed partial class MainViewModel : ObservableObject
                 Log($"AI事前分類: 通信{aiInput.TotalRequests:N0}件中、静的アセット・静的画面候補{aiInput.StaticExcluded:N0}件と除外キャッシュ{aiInput.DeferredExcluded:N0}件を対象外とし、採用済み・新規のリクエスト{aiInput.RequestPatternCount:N0}パターン・フォーム{aiInput.FormPatternCount:N0}パターンに集約しました。");
                 if (aiInput.TruncatedPatternCount > 0)
                     Log($"AI入力の上限により{aiInput.TruncatedPatternCount:N0}パターンを省略しました。全件の証跡は実行フォルダーに保持しています。");
-                if (!aiInput.RequiresAi && !Project.EnableAiInteractions && crawl.ExitCode == 0)
+                if (!aiInput.RequiresAi && !Project.EnableAiInteractions && string.IsNullOrWhiteSpace(Project.ForbiddenActions) && crawl.ExitCode == 0)
                 {
                     Log($"AIで確認すべき動的パターンがないため、{ExplorationAiName}の画面探索を起動せず完了します。");
                     var fastObservations = Path.Combine(path, "fast-observed-requests.jsonl");
@@ -1231,6 +1247,12 @@ public sealed partial class MainViewModel : ObservableObject
                 }
             }
             catch (Exception ex) { Log($"探索ブラウザの終了に失敗しました: {ex.Message}"); Project.Status = ProjectStatus.Partial; }
+            if (_currentRunDirectory is not null && File.Exists(Path.Combine(_currentRunDirectory, "capture-summary.json")))
+            {
+                var captureIntegrity = await RunCaptureIntegrity.CheckAsync(_currentRunDirectory);
+                Log(captureIntegrity.Message);
+                if (!captureIntegrity.Complete) Project.Status = ProjectStatus.Partial;
+            }
             if (proxyMonitorCancellation is not null)
             {
                 proxyMonitorCancellation.Cancel();
@@ -1267,7 +1289,6 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 try
                 {
-                    await new RunObservationCollector().CollectAsync(_currentRunDirectory, Project.AllowedOrigins, Project.ActiveRole);
                     var status = Project.Status;
                     await RecoverPartialObservationsAsync(_currentRunDirectory);
                     if (status is ProjectStatus.Partial or ProjectStatus.Failed or ProjectStatus.Paused or ProjectStatus.WaitingForHuman) Project.Status = status;
@@ -1434,10 +1455,20 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task<int> RecoverPartialObservationsAsync(string runDirectory)
     {
         var recovered = 0;
-        foreach (var fileName in new[] { "fast-observed-requests.jsonl", "ai-observed-requests.jsonl", "observed-requests.jsonl" })
+        var collected = false;
+        try { await new RunObservationCollector().CollectAsync(runDirectory, Project.AllowedOrigins, Project.ActiveRole); collected = true; }
+        catch (Exception ex) when (ex is JsonException or IOException or InvalidDataException)
+        { Log($"原本の集約は未完了です。保存済みJSONLを部分回復します: {ex.GetType().Name}"); }
+        foreach (var fileName in collected ? new[] { "observed-requests.jsonl" } : new[] { "fast-observed-requests.jsonl", "ai-observed-requests.jsonl", "observed-requests.jsonl" })
         {
             var path = Path.Combine(runDirectory, fileName);
             if (File.Exists(path) && new FileInfo(path).Length > 0) recovered += await ImportAsync(path);
+        }
+        if (recovered > 0)
+        {
+            var prepared = await CandidatePriorityPreparation.EnrichAsync(Project, runDirectory: runDirectory);
+            foreach (var limitation in prepared.Limitations) Log($"[参考] {limitation}");
+            GenerateCandidates();
         }
         if (recovered > 0) Log($"保存済み観測ファイルの延べ{recovered:N0}件を再読み込みしました（重複データは追加しません）。");
         return recovered;
@@ -1490,17 +1521,42 @@ public sealed partial class MainViewModel : ObservableObject
             !string.IsNullOrWhiteSpace(Project.AllowedOrigins);
     }
 
+    public async Task RecalculateCandidatePrioritiesAsync()
+    {
+        if (IsRunning || !await TryEnsureProjectAsync()) return;
+        using var cancellation = new CancellationTokenSource();
+        _runCancellation = cancellation;
+        IsRunning = true;
+        try
+        {
+            SetRunProgress("診断優先度", 10, "保存済みHARの要求内容を読み取っています。新しい通信は送信しません。");
+            var prepared = await CandidatePriorityPreparation.EnrichAsync(Project, cancellation.Token);
+            Log($"優先度の採点資料: HAR {prepared.HarFiles}件、要求本文を照合できた観測通信 {prepared.MatchedRequests}件。");
+            foreach (var limitation in prepared.Limitations) Log($"[参考] {limitation}");
+            await EnsureDocumentHintsAsync(cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            GenerateCandidates();
+            await RecordProjectChangeAsync();
+            SetRunProgress("診断優先度", 100, "要求内容・入力ドキュメント・選択ガイドラインから優先度を再計算しました。保存で案件へ反映します。");
+        }
+        catch (OperationCanceledException) { Log("優先度の再計算を中止しました。取得済みの通信情報と既存の判断は保持します。"); }
+        catch (Exception ex) { Log($"優先度の再計算に失敗しました: {ex.Message}"); }
+        finally { _runCancellation = null; IsRunning = false; }
+    }
+
     private void GenerateCandidates()
     {
+        ResetPriorityBulkStatus();
+        var previousStatus = Project.Status;
         Project.Status = ProjectStatus.Organizing;
         var previousDecisions = Project.Candidates
-            .GroupBy(x => NormalizeCandidatePattern(x.Pattern), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Last().Selected, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(x => NormalizeCandidatePattern(x.Pattern), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last().Selected, StringComparer.Ordinal);
         var adopted = Project.AdoptedCandidatePatterns.Select(NormalizeCandidatePattern)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(StringComparer.Ordinal);
         var deferred = Project.DeferredCandidatePatterns.Select(NormalizeCandidatePattern)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var candidates = _selector.Select(Project.Requests, Project.Guidelines ?? new GuidelineSelectionOptions());
+            .ToHashSet(StringComparer.Ordinal);
+        var candidates = _selector.Select(Project);
         Project.Candidates.Clear();
         foreach (var candidate in candidates)
         {
@@ -1513,12 +1569,14 @@ public sealed partial class MainViewModel : ObservableObject
             Project.Candidates.Add(candidate);
         }
         RefreshFilteredCandidates();
-        Project.Status = candidates.Count > 0 ? ProjectStatus.ReviewReady : ProjectStatus.Ready;
+        Project.Status = previousStatus is ProjectStatus.Partial or ProjectStatus.Paused or ProjectStatus.Failed or ProjectStatus.WaitingForHuman
+            ? previousStatus : candidates.Count > 0 ? ProjectStatus.ReviewReady : ProjectStatus.Ready;
         Log($"{Project.Requests.Count:N0}件から{candidates.Count:N0}個の代表パターンを生成しました。"); RefreshSummary();
     }
 
     private async Task ExportBurpScopeAsync()
     {
+        if (IsBurpAiPromptTarget) { RefreshBurpAiPrompt(); return; }
         if (!await TryEnsureProjectAsync()) return;
         if (IsZapTarget) { await ExportZapAsync(); return; }
         if (IsApiMode)
@@ -1577,13 +1635,15 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ResetBurpHandoff()
     {
+        ResetBurpHistoryStatus();
         SelectedApiRequest = null;
         BurpScopeRegexes.Clear();
         LastBurpExportDirectory = IsZapTarget ? _dataManagement.FindLatestZapDirectory(Project)
             : _dataManagement.FindLatestBurpExportDirectory(Project, Project.Mode);
         SelectedBurpScopeRegex = null;
         _nextBurpRegexIndex = 0;
-        BurpHandoffStatus = IsZapTarget ? "採用対象を確認してZAPパッケージを出力してください。診断開始には選択中のロールのHARが必要です。"
+        BurpHandoffStatus = IsBurpAiPromptTarget ? "採用済みRequest IDからプロンプトを作成します。この画面からScanやBurpの設定変更は実行しません。"
+            : IsZapTarget ? "採用対象を確認してZAPパッケージを出力してください。診断開始には選択中のロールのHARが必要です。"
             : IsApiMode ? "APIリクエスト画面で下書きを確認・採用してから［HTTPリクエストを出力］を押してください。" : "Burp Scope出力を生成すると、登録用の正規表現をここで案内します。";
         CopyNextBurpRegexCommand.RaiseCanExecuteChanged();
     }
@@ -1611,18 +1671,18 @@ public sealed partial class MainViewModel : ObservableObject
     private void UpdateCandidateDecisionCache(DiagnosticCandidate candidate)
     {
         var adopted = Project.AdoptedCandidatePatterns.Select(NormalizeCandidatePattern)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(StringComparer.Ordinal);
         var deferred = Project.DeferredCandidatePatterns.Select(NormalizeCandidatePattern)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(StringComparer.Ordinal);
         var key = NormalizeCandidatePattern(candidate.Pattern);
-        if (!Project.ExplicitlyReviewedCandidatePatterns.Select(NormalizeCandidatePattern).Contains(key, StringComparer.OrdinalIgnoreCase))
+        if (!Project.ExplicitlyReviewedCandidatePatterns.Select(NormalizeCandidatePattern).Contains(key, StringComparer.Ordinal))
             Project.ExplicitlyReviewedCandidatePatterns.Add(key);
         if (candidate.Selected) { adopted.Add(key); deferred.Remove(key); candidate.Decision = "候補"; }
         else { deferred.Add(key); adopted.Remove(key); candidate.Decision = "除外キャッシュ"; }
         Project.AdoptedCandidatePatterns.Clear();
-        foreach (var item in adopted.Order(StringComparer.OrdinalIgnoreCase)) Project.AdoptedCandidatePatterns.Add(item);
+        foreach (var item in adopted.Order(StringComparer.Ordinal)) Project.AdoptedCandidatePatterns.Add(item);
         Project.DeferredCandidatePatterns.Clear();
-        foreach (var item in deferred.Order(StringComparer.OrdinalIgnoreCase)) Project.DeferredCandidatePatterns.Add(item);
+        foreach (var item in deferred.Order(StringComparer.Ordinal)) Project.DeferredCandidatePatterns.Add(item);
     }
 
     private bool RemoveStartUrlFromDeferredCache()
@@ -1630,11 +1690,11 @@ public sealed partial class MainViewModel : ObservableObject
         if (!Uri.TryCreate(Project.StartUrl, UriKind.Absolute, out _)) return false;
         var startPattern = NormalizeCandidatePattern($"GET {Project.StartUrl}");
         if (Project.ExplicitlyReviewedCandidatePatterns.Select(NormalizeCandidatePattern)
-            .Contains(startPattern, StringComparer.OrdinalIgnoreCase)) return false;
+            .Contains(startPattern, StringComparer.Ordinal)) return false;
         var removed = false;
         for (var index = Project.DeferredCandidatePatterns.Count - 1; index >= 0; index--)
         {
-            if (!NormalizeCandidatePattern(Project.DeferredCandidatePatterns[index]).Equals(startPattern, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!NormalizeCandidatePattern(Project.DeferredCandidatePatterns[index]).Equals(startPattern, StringComparison.Ordinal)) continue;
             Project.DeferredCandidatePatterns.RemoveAt(index);
             removed = true;
         }
@@ -1643,13 +1703,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static string NormalizeCandidatePattern(string value)
     {
-        var separator = value.IndexOf(' ');
-        if (separator <= 0 || separator == value.Length - 1) return value.Trim();
-        var method = value[..separator].ToUpperInvariant();
-        var url = value[(separator + 1)..].Trim();
-        return Uri.TryCreate(url, UriKind.Absolute, out _)
-            ? $"{method} {UrlPatternNormalizer.NormalizeForSelection(url)}"
-            : value.Trim();
+        return RequestOperationIdentity.NormalizePattern(value);
     }
 
     private void SetRunProgress(string phase, int percent, string detail)
@@ -1673,5 +1727,5 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private void Log(string message) { Logs.Insert(0, $"{DateTime.Now:HH:mm:ss}  {message}"); while (Logs.Count > 500) Logs.RemoveAt(Logs.Count - 1); RaisePropertyChanged(nameof(ConsoleText)); RaisePropertyChanged(nameof(LatestLog)); }
-    private void RefreshSummary() { RaisePropertyChanged(nameof(StatusText)); RaisePropertyChanged(nameof(SummaryText)); RaisePropertyChanged(nameof(RequestSummary)); RaisePropertyChanged(nameof(CandidateSummary)); RaisePropertyChanged(nameof(FindingSummary)); RaisePropertyChanged(nameof(RunHistorySummary)); RefreshModeProperties(); }
+    private void RefreshSummary() { RaisePropertyChanged(nameof(StatusText)); RaisePropertyChanged(nameof(SummaryText)); RaisePropertyChanged(nameof(RequestSummary)); RaisePropertyChanged(nameof(CandidateSummary)); RaisePropertyChanged(nameof(FindingSummary)); RaisePropertyChanged(nameof(RunHistorySummary)); RefreshModeProperties(); RefreshBurpAiPrompt(); }
 }

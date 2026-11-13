@@ -22,6 +22,7 @@ public sealed class FindingReportService
 
     public async Task<FindingReportResult> ExportAsync(EngagementProject project)
     {
+        new CandidateSelector().RefreshPriorities(project);
         var root = _reportsDirectory is null ? ProjectPaths.Category(project, "reports") : Path.Combine(_reportsDirectory, project.Id.ToString("N"));
         var directory = Path.Combine(root, DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss-fff"));
         Directory.CreateDirectory(directory);
@@ -41,7 +42,7 @@ public sealed class FindingReportService
             allowedOrigins = Split(project.AllowedOrigins),
             supportingOrigins = Split(project.SupportingOrigins),
             roles = Split(project.Roles),
-            forbiddenActions = Split(project.ForbiddenActions),
+            forbiddenActions = SplitForbidden(project.ForbiddenActions),
             enabledGuidelines = EnabledGuidelines(project.Guidelines),
             coverage = BuildCoverage(project),
             selectedCandidates = selected.Select(CandidatePayload),
@@ -64,11 +65,11 @@ public sealed class FindingReportService
             limitations = new[] { "外部診断ツールの警告を整理した結果です。内容の判断は診断担当者が行います。" }
         }, new JsonSerializerOptions { WriteIndented = true }));
         await File.WriteAllLinesAsync(checklistPath,
-            new[] { "Selected\tDecision\tConfidence\tCategory\tMethod\tURL\tRole\tSimilarCount\tReason\tDiagnosticCaution\tGuidelineBasis" }
+            new[] { "Selected\tPriority\tConfidence\tCategory\tMethod\tURL\tRole\tSimilarCount\tReason\tDiagnosticCaution\tGuidelineBasis\tPriorityReason\tPriorityScoringVersion\tDecision" }
                 .Concat(project.Candidates.Select(x => string.Join('\t',
-                    x.Selected, Clean(x.Decision), Clean(x.Confidence), Clean(x.Category), Clean(x.Representative.Method),
+                    x.Selected, x.Priority, Clean(x.Confidence), Clean(x.Category), Clean(x.Representative.Method),
                     Clean(x.Representative.Url), Clean(x.Representative.Role), x.SimilarCount, Clean(x.Reason),
-                    Clean(x.DiagnosticCaution), Clean(x.GuidelineBasis)))), new UTF8Encoding(true));
+                    Clean(x.DiagnosticCaution), Clean(x.GuidelineBasis), Clean(x.PriorityReason), x.PriorityScoringVersion, Clean(x.Decision)))), new UTF8Encoding(true));
         return new(directory, jsonPath, htmlPath, checklistPath, project.Findings.Count, selected.Length)
         {
             MarkdownPath = markdownPath, AlertGroupCount = japaneseReport.AlertGroupCount,
@@ -80,6 +81,9 @@ public sealed class FindingReportService
     {
         candidate.Selected,
         candidate.Decision,
+        candidate.Priority,
+        candidate.PriorityReason,
+        candidate.PriorityScoringVersion,
         candidate.Confidence,
         candidate.Category,
         candidate.Pattern,
@@ -120,7 +124,7 @@ public sealed class FindingReportService
         AppendList(sb, "診断を許可されたOrigin", Split(project.AllowedOrigins));
         AppendList(sb, "表示・認証に必要な対象外Origin", Split(project.SupportingOrigins));
         AppendList(sb, "認証ロール", Split(project.Roles));
-        AppendList(sb, "自動実行しない操作", Split(project.ForbiddenActions));
+        AppendList(sb, "自動実行しない操作", SplitForbidden(project.ForbiddenActions));
         AppendList(sb, "参照ガイドライン", EnabledGuidelines(project.Guidelines));
 
         sb.Append("<h2>探索カバレッジ</h2>");
@@ -129,10 +133,10 @@ public sealed class FindingReportService
         AppendBreakdown(sb, "観測ロール", project.Requests.GroupBy(x => string.IsNullOrWhiteSpace(x.Role) ? "未記録" : x.Role).Select(x => (x.Key, x.Count())));
         AppendBreakdown(sb, "候補分類", project.Candidates.GroupBy(x => x.Category).Select(x => (x.Key, x.Count())));
 
-        sb.Append("<h2>採用した診断対象候補</h2><table><thead><tr><th>分類</th><th>Method / URL</th><th>ロール</th><th>類似数</th><th>選定理由</th><th>診断時の注意</th></tr></thead><tbody>");
-        foreach (var candidate in selected)
-            sb.Append($"<tr><td>{Encode(candidate.Category)}</td><td>{Encode(candidate.Representative.Method)} {Link(candidate.Representative.Url)}</td><td>{Encode(candidate.Representative.Role)}</td><td>{candidate.SimilarCount:N0}</td><td>{Encode(candidate.Reason)}</td><td>{Encode(candidate.DiagnosticCaution)}</td></tr>");
-        if (selected.Length == 0) sb.Append("<tr><td colspan=\"6\">採用候補はありません。</td></tr>");
+        sb.Append("<h2>採用した診断対象候補</h2><p>診断優先度は0〜100の独自指標です。100に近いほど先に診断し、0は通常の機能別診断からの除外候補です。脆弱性の確率・深刻度ではありません。</p><table><thead><tr><th>優先度</th><th>分類</th><th>Method / URL</th><th>ロール</th><th>類似数</th><th>選定理由・採点理由</th><th>診断時の注意</th></tr></thead><tbody>");
+        foreach (var candidate in selected.OrderByDescending(x => x.Priority))
+            sb.Append($"<tr><td>{candidate.Priority}/100</td><td>{Encode(candidate.Category)}</td><td>{Encode(candidate.Representative.Method)} {Link(candidate.Representative.Url)}</td><td>{Encode(candidate.Representative.Role)}</td><td>{candidate.SimilarCount:N0}</td><td>{Encode(candidate.Reason)}<br>{Encode(candidate.PriorityReason)}</td><td>{Encode(candidate.DiagnosticCaution)}</td></tr>");
+        if (selected.Length == 0) sb.Append("<tr><td colspan=\"7\">採用候補はありません。</td></tr>");
         sb.Append("</tbody></table>");
 
         sb.Append("<h2>診断所見</h2>");
@@ -185,6 +189,7 @@ public sealed class FindingReportService
     }
 
     private static string[] Split(string value) => (value ?? string.Empty).Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private static string[] SplitForbidden(string value) => (value ?? string.Empty).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private static string Link(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? $"<a href=\"{Encode(uri.AbsoluteUri)}\">{Encode(value)}</a>" : Encode(value);
     private static string Clean(string value) => (value ?? string.Empty).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
     private static string Encode(string value) => WebUtility.HtmlEncode(value ?? string.Empty);

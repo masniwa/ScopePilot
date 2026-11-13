@@ -11,6 +11,7 @@ public static class GuidelineSelectionPolicy
         { "_", "v", "ver", "version", "cb", "cache", "cachebuster", "rev", "hash" };
     private static readonly string[] AssetExtensions =
         [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".css", ".js", ".mjs", ".woff", ".woff2", ".ttf", ".map", ".mp3", ".mp4"];
+    internal static bool HasAssetExtension(string path) => AssetExtensions.Any(x => path.EndsWith(x, StringComparison.OrdinalIgnoreCase));
     private static readonly Regex AuthPath = PathWords("login|logout|signin|sign-in|signout|sign-out|auth|oauth|sso|password|reset|session|token|mfa|register|signup");
     private static readonly Regex AccessPath = PathWords("admin|role|permission|account|member|user|users|profile|tenant|organization|organisation|invoice|orders?");
     private static readonly Regex FilePath = PathWords("upload|download|file|files|export|import|attachment|attachments|document|documents|report|reports");
@@ -31,8 +32,9 @@ public static class GuidelineSelectionPolicy
         var contentType = (request.ContentType ?? string.Empty).Split(';', 2)[0].Trim();
         var path = uri.AbsolutePath;
         var unusualStatus = request.StatusCode is >= 300 and < 400 or 401 or 403 or >= 500;
-        var isAsset = method is "GET" or "HEAD" && !unusualStatus &&
-            (AssetExtensions.Any(x => path.EndsWith(x, StringComparison.OrdinalIgnoreCase)) ||
+        var isAsset = method is "GET" or "HEAD" && request.StatusCode is >= 200 and < 300 &&
+            !DiagnosticPriorityPolicy.HasSensitiveContext(request) &&
+            (HasAssetExtension(path) ||
              contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
              contentType.StartsWith("font/", StringComparison.OrdinalIgnoreCase) ||
              contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
@@ -131,13 +133,15 @@ public static class GuidelineSelectionPolicy
             AddReference(references, guidelines.OwaspTop10, "OWASP Top 10:2025 A01");
         }
 
-        var passiveHtml = signals.Count == 0 && request.PageInspected && request.FormCount == 0 &&
+        var passiveHtml = signals.Count == 0 && !DiagnosticPriorityPolicy.HasSensitiveContext(request) && request.PageInspected && request.FormCount == 0 &&
             method is "GET" or "HEAD" && request.StatusCode is >= 200 and < 300 &&
             (guidelines.Wstg || guidelines.WebAppPentestGuidelines) &&
             contentType.Equals("text/html", StringComparison.OrdinalIgnoreCase);
         if (passiveHtml)
             return new(false, "静的画面候補", "中", "画面を確認した範囲ではフォーム・URL入力点・重要機能の手掛かりがありません。同一テンプレートは代表化し、個別診断から除外します。", "静的と証明したわけではありません。クライアント側通信、認証後の表示差、共通ヘッダー等は別途確認してください。", ["画面確認済み", "フォームなし", "URL入力点なし"], EnabledReferences(guidelines, "WSTG-INFO-06", "WebAppPentestGuidelines v1.2"), false, true);
 
+        if ((request.RequestFieldNames?.Length ?? 0) > 0) signals.Add($"実際の要求本文の項目を観測: {string.Join(", ", request.RequestFieldNames!.Take(10))}");
+        else if (request.RequestBodyCaptured) signals.Add("要求本文を取得済み。解析できない形式・項目は別途確認");
         if (signals.Count == 0) signals.Add("画面の入力要素・認証差・本文を未確認。静的と断定できない");
         var caution = category switch
         {

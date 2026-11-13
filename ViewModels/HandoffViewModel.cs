@@ -23,15 +23,18 @@ public sealed partial class MainViewModel
         get => (int)Project.DiagnosticTools.Target;
         set
         {
-            if (IsRunning || value is not (0 or 1) || Project.DiagnosticTools.Target == (HandoffTarget)value) return;
+            if (IsRunning || value is not (0 or 1 or 2) || Project.DiagnosticTools.Target == (HandoffTarget)value) return;
             Project.DiagnosticTools.Target = (HandoffTarget)value;
             LastBurpExportDirectory = null;
             BurpScopeRegexes.Clear();
-            BurpHandoffStatus = IsZapTarget ? "採用対象を確認してZAPパッケージを出力してください。診断開始には選択中のロールのHARが必要です。"
+            BurpHandoffStatus = IsBurpAiPromptTarget ? "採用済みRequest IDからプロンプトを作成します。この画面からScanやBurpの設定変更は実行しません。"
+                : IsZapTarget ? "採用対象を確認してZAPパッケージを出力してください。診断開始には選択中のロールのHARが必要です。"
                 : IsApiMode ? "採用したAPIリクエストをBurp Repeaterへ渡します。" : "採用候補のScope正規表現をBurpへ登録します。";
             RaisePropertyChanged();
             RaisePropertyChanged(nameof(IsZapTarget));
             RaisePropertyChanged(nameof(IsBurpTarget));
+            RaisePropertyChanged(nameof(IsBurpAiPromptTarget));
+            RefreshBurpAiPrompt();
             RaisePropertyChanged(nameof(HandoffDescription));
             RaisePropertyChanged(nameof(BurpExportActionText));
             StartZapCommand.RaiseCanExecuteChanged();
@@ -41,7 +44,7 @@ public sealed partial class MainViewModel
         }
     }
     public bool IsZapTarget { get => Project.DiagnosticTools.Target == HandoffTarget.Zap; set { if (value) HandoffTargetIndex = 1; } }
-    public bool IsBurpTarget { get => !IsZapTarget; set { if (value) HandoffTargetIndex = 0; } }
+    public bool IsBurpTarget { get => Project.DiagnosticTools.Target == HandoffTarget.BurpSuite; set { if (value) HandoffTargetIndex = 0; } }
     public bool ZapActiveScanEnabled
     {
         get => Project.DiagnosticTools.EnableZapActiveScan;
@@ -130,7 +133,7 @@ public sealed partial class MainViewModel
             RefreshSaveState();
         }
     }
-    public string HandoffDescription => IsZapTarget
+    public string HandoffDescription => IsBurpAiPromptTarget ? "採用済み候補のBurp Request IDを優先度順に並べ、Burp+mcp+AIへ渡すプロンプトを作成します。この画面からActiveScanや設定変更は実行しません。" : IsZapTarget
         ? ZapActiveScanEnabled
             ? $"ZAP: 保存済みHARを取り込み、採用済みURLへアクティブ診断を行います（強度{ZapActiveScanStrength}・閾値{ZapActiveScanThreshold}・対象上限{ZapActiveScanMaxTargets}件）。攻撃リクエストを送信するため、実行ごとの承認が必要です。"
             : "ZAP: Playwrightで正常操作を手動記録し、保存済みHARを解析します。必要add-onの導入と版記録、History・HAR・traceの保存に対応しています。"
@@ -209,7 +212,8 @@ public sealed partial class MainViewModel
             LastBurpExportDirectory = package.Directory;
             BurpHandoffStatus = package.MessageCount > 0
                 ? $"保存済み通信 {package.MessageCount}件のZAPパッケージを準備しました。［ZAP診断を開始］でCLI実行できます。"
-                : "未送信のAPI下書きを出力しました。診断開始には、選択中のロールで観測済み応答を含むHARが必要です。";
+                : IsApiMode ? "未送信のAPI下書きを出力しました。診断開始には、選択中のロールで観測済み応答を含むHARが必要です。"
+                    : "採用対象・選択中のロールに一致する登録済みHARの通信がありません。探索の保存結果とHARの取込・ロールを確認してください。診断用HAR・実行計画は生成していません。";
             await RecordProjectChangeAsync();
             await RefreshRunHistoryAsync();
             await RefreshDataSummaryAsync();

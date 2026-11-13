@@ -83,8 +83,28 @@ public sealed class ObservedRequest
     public bool PageInspected { get; set; }
     public int FormCount { get; set; }
     public string[] FormFieldNames { get; set; } = [];
+    public string RequestContentType { get; set; } = string.Empty;
+    public bool RequestBodyCaptured { get; set; }
+    public string[] RequestFieldNames { get; set; } = [];
+    public string[] RequestHeaderNames { get; set; } = [];
+    public string[] RequestSemanticSignals { get; set; } = [];
+    public RequestPriorityEvidence[] RequestPriorityEvidence { get; set; } = [];
+    [System.Text.Json.Serialization.JsonIgnore] public bool RequestChangeBaselineMatched => (RequestPriorityEvidence?.Length ?? 0) > 0 && RequestPriorityEvidence!.All(x => x.BaselineMatched);
+    [System.Text.Json.Serialization.JsonIgnore] public string[] RequestChangedFieldNames => (RequestPriorityEvidence ?? []).Where(x => x.BaselineMatched).SelectMany(x => x.FieldNames).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    [System.Text.Json.Serialization.JsonIgnore] public string[] RequestChangedSemanticSignals => (RequestPriorityEvidence ?? []).Where(x => x.BaselineMatched).SelectMany(x => x.SemanticSignals).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    public string[] RequestOperationTerms { get; set; } = [];
+    public string[] RequestContentLimitations { get; set; } = [];
+    public RequestOperation[] RequestOperations { get; set; } = [];
+    public string RequestFingerprint { get; set; } = string.Empty;
+    public int? BurpProxyRequestId { get; set; }
+    public string BurpCaptureId { get; set; } = string.Empty;
+    public DateTimeOffset? BurpRequestTime { get; set; }
     public DateTimeOffset ObservedAt { get; set; } = DateTimeOffset.Now;
 }
+
+// Values stay in the capture only. These bounded event summaries distinguish
+// an unchanged snapshot from another request whose changes remain unknown.
+public sealed record RequestPriorityEvidence(string EventKey, bool BaselineMatched, string[] FieldNames, string[] SemanticSignals, string[] OperationTerms);
 
 public sealed class DiagnosticCandidate : INotifyPropertyChanged
 {
@@ -101,6 +121,10 @@ public sealed class DiagnosticCandidate : INotifyPropertyChanged
             OnPropertyChanged(nameof(Selected));
         }
     }
+    private int _priority;
+    public int Priority { get => _priority; set => _priority = Math.Clamp(value, 0, 100); }
+    public string PriorityReason { get; set; } = string.Empty;
+    public int PriorityScoringVersion { get; set; }
     public string Confidence { get; set; } = "中";
     public string Category { get; set; } = "その他";
     public string Decision
@@ -120,9 +144,13 @@ public sealed class DiagnosticCandidate : INotifyPropertyChanged
     public string Pattern { get; set; } = string.Empty;
     public int SimilarCount { get; set; }
     public ObservedRequest Representative { get; set; } = new();
+    [System.Text.Json.Serialization.JsonIgnore] public string Operation => Services.RequestOperationIdentity.Display(Representative);
+    [System.Text.Json.Serialization.JsonIgnore] public string BurpRequestIdDisplay => Representative.BurpProxyRequestId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "未照合";
 
     private void OnPropertyChanged(string propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
+
+public sealed record RequestOperation(string Name, string ValueHash, string DisplayValue);
 
 public sealed class DiagnosticFinding
 {

@@ -70,6 +70,16 @@ internal static class ExplorationCoverage
                 operations[key] = row;
             }
         report["operationCoverage"] = new JsonArray(operations.Values.Select(row => row.DeepClone()).ToArray());
+        var evidenceReview = operations.Values.OfType<JsonObject>().Select(row => new
+        {
+            page = row["page"]?.GetValue<string>(), operation = row["operation"]?.GetValue<string>(),
+            communicationStatus = OperationEvidencePolicy.CommunicationStatus(row)
+        }).ToArray();
+        await File.WriteAllTextAsync(Path.Combine(directory, "operation-evidence-review.json"), JsonSerializer.Serialize(new
+        {
+            checkedAt = DateTimeOffset.UtcNow, unlinked = evidenceReview.Count(x => x.communicationStatus == "unlinked"), operations = evidenceReview,
+            note = "AIの操作報告とHTTPの対応状況。references_reportedは実台帳との独立照合完了を意味しません。unlinkedはHTTPなし・送信成功へ推測しません。"
+        }), token);
         // Keep candidate identity available to both providers on every pass.
         report["operationCandidates"] = new JsonArray(operations.Values.Select(row => (JsonNode)new JsonObject
         {
@@ -88,7 +98,7 @@ internal static class ExplorationCoverage
         File.Move(path + ".tmp", path, true);
     }
 
-    internal static bool MadeProgress(string before, string after)
+    internal static bool MadeProgress(string before, string after, IReadOnlyList<string>? allowedOrigins = null)
     {
         Dictionary<string, JsonObject> Rows(string text)
         {
@@ -98,7 +108,7 @@ internal static class ExplorationCoverage
             return result;
         }
         var old = Rows(before); var current = Rows(after);
-        bool Pending(JsonObject row) { using var doc = JsonDocument.Parse(row.ToJsonString()); return IsPending(doc.RootElement); }
+        bool Pending(JsonObject row) { using var doc = JsonDocument.Parse(row.ToJsonString()); return IsPending(doc.RootElement, allowedOrigins ?? []); }
         // Wording/request-count changes alone do not justify repeating a failed
         // mutation. New candidates and resolved pending items are progress.
         return current.Any(pair => !old.ContainsKey(pair.Key) || Pending(old[pair.Key]) && !Pending(pair.Value));
@@ -123,12 +133,14 @@ internal static class ExplorationCoverage
         await File.WriteAllTextAsync(file + ".tmp", report.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), token);
         File.Move(file + ".tmp", file, true);
     }
-    internal static bool IsPending(JsonElement item)
+    internal static bool IsPending(JsonElement item) => IsPending(item, []);
+    internal static bool IsPending(JsonElement item, IReadOnlyList<string> allowedOrigins)
     {
         if (Regex.IsMatch(item.GetProperty("operation").GetString() ?? "", "ログアウト|log.?out|sign.?out", RegexOptions.IgnoreCase)) return false;
         var outcome = item.GetProperty("outcome").GetString();
         if (outcome is "not_attempted" or "failed") return true;
         if (outcome is not ("blocked" or "unavailable")) return false;
+        if (OperationEvidencePolicy.IsOutsideScope(item, allowedOrigins)) return false;
         // A terminal availability decision needs both a real UI observation and
         // an independent specification/source basis. It remains unobserved in
         // the inventory; it only stops repeatedly blocking finalization.
@@ -145,7 +157,7 @@ internal static class ExplorationCoverage
         const string boundary = @"許可(?:Origin|オリジン)(?:\s+https?://\S+)?\s*(?:の範囲)?外";
         var outsideOrigin = Regex.IsMatch(reason, boundary + @"|outside[ _-](?:allowed[ _-])?origin|転送先Originが許可Origin.{0,200}一致しない", RegexOptions.IgnoreCase);
         var negatedBoundary = Regex.IsMatch(reason, boundary + @"(?:ではない|ではありません|ではなく)|not outside[ _-](?:allowed[ _-])?origin", RegexOptions.IgnoreCase);
-        if (outsideOrigin && !negatedBoundary) return false;
+        if (allowedOrigins.Count == 0 && outsideOrigin && !negatedBoundary) return false;
         // A real role/prohibition boundary is terminal; temporary missing data,
         // lost authentication, and disabled pagination are still unverified work.
         if (Regex.IsMatch(reason, @"(?<!\d)403(?!\d)|forbidden|permission[ _-]?denied|権限(?:不足|が(?:ない|ありません))|明示.{0,8}禁止|禁止(?:操作|URL|ラベル)", RegexOptions.IgnoreCase)) return false;
@@ -196,7 +208,8 @@ internal static class ExplorationCoverage
         }
         using var report = JsonDocument.Parse(text);
         if (!report.RootElement.TryGetProperty("operationCoverage", out var coverage)) return null;
-        var pending = coverage.EnumerateArray().Where(IsPending).ToArray();
+        var allowedOrigins = OperationEvidencePolicy.AllowedOrigins(contract.RootElement);
+        var pending = coverage.EnumerateArray().Where(item => IsPending(item, allowedOrigins)).ToArray();
         if (pending.Length == 0 && round != 1) { await StopAsync(directory, "queue_empty", cancellationToken); return null; }
         if (round > MaxContinuationRounds) { await StopAsync(directory, "round_limit", cancellationToken); return null; }
         if (round > 2)
@@ -207,7 +220,7 @@ internal static class ExplorationCoverage
             {
                 var a = await File.ReadAllTextAsync(first, cancellationToken);
                 var b = await File.ReadAllTextAsync(last, cancellationToken);
-                if (!MadeProgress(a, b) && !MadeProgress(b, text))
+                if (!MadeProgress(a, b, allowedOrigins) && !MadeProgress(b, text, allowedOrigins))
                 { await StopAsync(directory, "no_progress", cancellationToken); return null; }
             }
         }
@@ -222,6 +235,7 @@ internal static class ExplorationCoverage
             結果不明の更新を無条件に再送せず、保存状態を先に調べます。処理できない場合は実際のUI状態・応答・必要条件を記録します。
             前回のoperation名は維持します。再作成でデータIDが変わっても同じ操作の点検として扱い、pageには今回の実画面を記録します。すでに確認済みの操作はScopePilotが保持するため再記載せず、今回更新した操作と新しく発見した操作を返します。
             実際の403・禁止・必要な認証入力を回避しません。特殊操作はmanual_requiredへ移し、専用の自動化で解決しようとしません。
+            前回キューに残った操作でも利用者の禁止文に意味が該当する場合は実行しません。禁止または判断不能はblockedのまま理由を更新し、未実行を消すために送信しません。scopepilot_policyの各規則の意味判断を今回の操作と副作用について作り直してください。
             """ + ExecutionInstruction + AuthenticationPreparationInstruction + ExplorationPhase.LifecycleClarification + "\n同じ未実行理由の反復ではなく、原因（検索条件・必要入力・選択状態・依存データ・認証・技術エラー）を確認し、今回変えられる前提から処理してください。候補の報告漏れも未実行として残ります。特殊操作は手動のままです。\n前回結果:\n" + text + "\n未実行キュー:\n" + JsonSerializer.Serialize(pending) + (round == 1 ? ExplorationPhase.ReviewInstruction : "");
     }
 
@@ -233,7 +247,9 @@ internal static class ExplorationCoverage
         using var report = JsonDocument.Parse(await File.ReadAllTextAsync(file, cancellationToken));
         if (!report.RootElement.TryGetProperty("operationCoverage", out var coverage)) return 0;
         var manual = coverage.EnumerateArray().Where(item => item.GetProperty("outcome").GetString() == "manual_required").ToArray();
-        var pending = coverage.EnumerateArray().Where(IsPending).ToArray();
+        var contractPath = Path.Combine(directory, "engagement.json");
+        using var contract = File.Exists(contractPath) ? JsonDocument.Parse(await File.ReadAllTextAsync(contractPath, cancellationToken)) : JsonDocument.Parse("{}");
+        var pending = coverage.EnumerateArray().Where(item => IsPending(item, OperationEvidencePolicy.AllowedOrigins(contract.RootElement))).ToArray();
         await File.WriteAllTextAsync(Path.Combine(directory, "pending-operations.json"), JsonSerializer.Serialize(pending, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
         await File.WriteAllLinesAsync(Path.Combine(directory, "pending-operations.txt"), pending.Select(item => $"{item.GetProperty("page").GetString()} / {item.GetProperty("operation").GetString()}\n{(item.TryGetProperty("reason", out var reason) ? reason.GetString() : "")}\n"), cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(directory, "manual-operations.json"), JsonSerializer.Serialize(manual, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);

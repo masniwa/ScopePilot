@@ -50,13 +50,15 @@ public sealed class McpSetupService
             Directory.CreateDirectory(output);
             servers["playwright"] = new(node!, [cli, "--cdp-endpoint", cdp, "--ignore-https-errors", "--timeout-action", "15000", "--timeout-navigation", "20000", "--output-dir", output],
                 PlaywrightTools(project.EnableAiInteractions));
-            if (project.EnableAiInteractions)
+            var semanticPolicy = !string.IsNullOrWhiteSpace(project.ForbiddenActions);
+            if (project.EnableAiInteractions || semanticPolicy)
             {
-                var uploadRoot = await ExplorationUploadFixture.CreateAsync(runDirectory);
+                var uploadRoot = project.EnableAiInteractions ? await ExplorationUploadFixture.CreateAsync(runDirectory) : null;
                 var filter = Path.Combine(AppContext.BaseDirectory, "tools", "mcp-tool-filter.js");
-                if (!File.Exists(filter)) throw new FileNotFoundException("MCP filter is required for fixture uploads.", filter);
+                if (!File.Exists(filter)) throw new FileNotFoundException("MCP filter is required for exploration policy checks.", filter);
                 var server = servers["playwright"];
-                servers["playwright"] = new(node!, [filter, "--allow", string.Join(',', server.EnabledTools), "--upload-root", uploadRoot, "--", server.Command, ..server.Args, "--caps", "vision"], server.EnabledTools);
+                servers["playwright"] = WrapPlaywrightRuntime(server, node!, filter, uploadRoot,
+                    semanticPolicy ? Path.GetFullPath(Path.Combine(runDirectory, "engagement.json")) : null, project.EnableAiInteractions);
             }
             messages.Add("[OK] Playwright MCPは現在の探索ブラウザへ接続します。認証セッションを引き継ぎます。");
             var java = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "BurpSuite", "jre", "bin", "java.exe");
@@ -73,6 +75,17 @@ public sealed class McpSetupService
         {
             await File.WriteAllLinesAsync(Path.Combine(runDirectory, "mcp-setup.log"), messages);
         }
+    }
+
+    internal static McpRuntimeServer WrapPlaywrightRuntime(McpRuntimeServer server, string node, string filter,
+        string? uploadRoot, string? policyEngagement, bool vision)
+    {
+        var args = new List<string> { filter, "--allow", string.Join(',', server.EnabledTools) };
+        if (uploadRoot is not null) args.AddRange(["--upload-root", uploadRoot]);
+        if (policyEngagement is not null) args.AddRange(["--policy-engagement", policyEngagement]);
+        args.AddRange(["--", server.Command, ..server.Args]);
+        if (vision) args.AddRange(["--caps", "vision"]);
+        return new(node, args.ToArray(), server.EnabledTools);
     }
 
     internal static async Task<string[]> RuntimeArgumentsAsync(string runDirectory)

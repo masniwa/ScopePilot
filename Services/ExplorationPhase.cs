@@ -18,7 +18,7 @@ internal static class ExplorationPhase
         データが足りなければ通常のUIから今回用のデータを作ります。次ページのために大量データが必要なら、その前提と未確認を記録し、無制限に作成しません。
         複数の画面を1項目にまとめず、1画面・1操作の行に分解し、operation名を以後維持します。実通信と結果に根拠のない完了分類はしません。
         特殊操作はmanual_requiredのまま残します。通常の検索・保存・個別/一括操作を、単に未実行という理由で手動へ移しません。
-        """;
+        """ + ExplorationPackageBuilder.SemanticPolicyReminder;
 
     internal static async Task SetAsync(string directory, string stage, bool allowLogout, CancellationToken token)
     {
@@ -46,7 +46,8 @@ internal static class ExplorationPhase
             await File.WriteAllTextAsync(reportPath, text, token);
         }
         using var report = JsonDocument.Parse(text);
-        if (!report.RootElement.TryGetProperty("operationCoverage", out var coverage) || coverage.GetArrayLength() == 0 || coverage.EnumerateArray().Any(ExplorationCoverage.IsPending)) return null;
+        if (!report.RootElement.TryGetProperty("operationCoverage", out var coverage) || coverage.GetArrayLength() == 0 ||
+            coverage.EnumerateArray().Any(item => ExplorationCoverage.IsPending(item, OperationEvidencePolicy.AllowedOrigins(contract.RootElement)))) return null;
         if (!await ExplorationCoverage.HasTimeAsync(directory, token)) return null;
         await File.WriteAllTextAsync(Path.Combine(directory, $"exploration-round-{ExplorationCoverage.FinalizationRound}.json"), report.RootElement.GetRawText(), token);
         await SetAsync(directory, "finalization", true, token);
@@ -57,6 +58,6 @@ internal static class ExplorationPhase
             特殊操作のmanual_requiredは変更・実行せず残します。新しい通常操作の未確認が見つかったらログアウトを止め、その操作と理由を報告します。
             新しい通常操作がなく、片付けが済んだら、案件で許可されている場合だけ最後にUIからログアウトを確認できます。
             今回更新した項目と片付け・ログアウト結果だけ返し、前回確認済みの項目を失わせないでください。
-            """;
+            """ + ExplorationPackageBuilder.SemanticPolicyReminder;
     }
 }

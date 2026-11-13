@@ -31,9 +31,18 @@ public static class ExplorationUploadFixture
         var bytes = Encoding.ASCII.GetBytes(pdf.ToString());
         var file = Path.Combine(directory, marker + ".pdf");
         await File.WriteAllBytesAsync(file, bytes);
+        // A small, generated RGB swatch for ordinary image-only upload controls.
+        // No local user files, personal images, metadata or external resources.
+        var image = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA+UlEQVR4nO3RQQ0AIAzAwMlBGBIRiIw9ekkFNLk592mxWT+IBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtPgTvBLG1OYHHAAAAAElFTkSuQmCC");
+        var imageFile = Path.Combine(directory, marker + ".png");
+        await File.WriteAllBytesAsync(imageFile, image);
         await File.WriteAllTextAsync(Path.Combine(runDirectory, "upload-fixture.json"), JsonSerializer.Serialize(new {
             path=file, marker, pageCount=2, sha256=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
-            purpose="Generated test document only. Use browser_file_upload through a visible upload UI; do not upload other local files."
+            files = new[] {
+                new { path=file, contentType="application/pdf", sha256=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant() },
+                new { path=imageFile, contentType="image/png", sha256=Convert.ToHexString(SHA256.HashData(image)).ToLowerInvariant() }
+            },
+            purpose="Generated test fixtures only. Select the listed PDF or PNG matching the visible upload UI's requirements. Use browser_file_upload; do not upload other local files."
         }));
         return directory;
     }

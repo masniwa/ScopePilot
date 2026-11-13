@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ScopePilot.Domain;
 
 namespace ScopePilot.Services;
@@ -18,15 +19,18 @@ public sealed class BurpScopeExportService
         var selected = project.Candidates.Where(x => x.Selected).ToArray();
         if (selected.Length == 0) throw new InvalidOperationException("採用された診断対象候補がありません。候補一覧で採用してください。");
 
+        foreach (var candidate in selected) ApiRequestFormatter.EnsureAllowed(candidate.Representative.Url, project.AllowedOrigins);
+        var regexes = selected.Select(BuildScopeRegex).Distinct(StringComparer.Ordinal).ToArray();
+        var combinedRegexes = CombineRegexes(regexes);
+        if (selected.Any(candidate => !combinedRegexes.Any(regex => Regex.IsMatch(candidate.Representative.Url, regex, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))))
+            throw new InvalidDataException("採用URLに一致しないScope正規表現があります。候補を再計算して確認してください。");
+
         var root = _exportsDirectory is null ? ProjectPaths.Category(project, "exports") : Path.Combine(_exportsDirectory, project.Id.ToString("N"));
         var directory = Path.Combine(root, DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss-fff"));
         Directory.CreateDirectory(directory);
 
-        var regexes = selected.Select(BuildScopeRegex).Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.Ordinal).ToArray();
-        var combinedRegexes = CombineRegexes(regexes);
         var urls = selected.Select(x => x.Representative.Url).Where(x => Uri.TryCreate(x, UriKind.Absolute, out _))
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            .Distinct(StringComparer.Ordinal).ToArray();
         var regexPath = Path.Combine(directory, "burp-scope-regex.txt");
         var combinedRegexPath = Path.Combine(directory, "burp-scope-combined-regex.txt");
         var urlPath = Path.Combine(directory, "burp-scope-urls.txt");
@@ -51,7 +55,8 @@ public sealed class BurpScopeExportService
             limitations = new[]
             {
                 "Burp Suite Community EditionではScope設定の自動変更を行いません。burp-scope-combined-regex.txtをBurpのTarget > Scopeへ手動登録してください。",
-                "Scopeは通信を許可・遮断する機能ではなく、Burpの対象表示・対象機能を絞る設定です。実際の診断範囲は案件の許可Originと照合してください。"
+                "Scopeは通信を許可・遮断する機能ではなく、Burpの対象表示・対象機能を絞る設定です。実際の診断範囲は案件の許可Originと照合してください。",
+                "URLのScopeはHTTPメソッドや要求本文の処理指定を区別しません。個別の診断対象は候補一覧・Request IDと照合してください。"
             }
         };
         await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
@@ -60,12 +65,13 @@ public sealed class BurpScopeExportService
         return new(directory, regexPath, combinedRegexPath, urlPath, jsonPath, checklistPath, selected.Length, combinedRegexes);
     }
 
-    private static string BuildScopeRegex(DiagnosticCandidate candidate)
+    internal static string BuildScopeRegex(DiagnosticCandidate candidate)
     {
         var source = candidate.Pattern;
         var separator = source.IndexOf(' ');
         if (separator >= 0 && separator + 1 < source.Length) source = source[(separator + 1)..];
-        if (!Uri.TryCreate(candidate.Representative.Url, UriKind.Absolute, out var representative)) return string.Empty;
+        source = source.Split('#', 2)[0];
+        var representative = ApiRequestFormatter.ValidateUrl(candidate.Representative.Url);
         if (!source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !source.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             source = representative.GetLeftPart(UriPartial.Authority) + (source.StartsWith('/') ? source : "/" + source);
 
@@ -75,18 +81,35 @@ public sealed class BurpScopeExportService
         var pathAndQuery = source[pathStart..];
         var queryStart = pathAndQuery.IndexOf('?');
         var path = queryStart >= 0 ? pathAndQuery[..queryStart] : pathAndQuery;
-        var regex = "^" + RegexEscape(authority) + RegexEscape(path);
+        // Old projects stored lower-cased static segments. Recover their spelling
+        // from the corresponding observed URL while retaining ID placeholders.
+        var templateSegments = path.Split('/');
+        var observedSegments = representative.AbsolutePath.TrimEnd('/').Split('/');
+        if (templateSegments.Length == observedSegments.Length)
+            for (var index = 0; index < templateSegments.Length; index++)
+                templateSegments[index] = RestoreObservedSegmentCase(templateSegments[index], observedSegments[index]);
+        path = string.Join('/', templateSegments).TrimEnd('/');
+        var regex = "^(?i:" + RegexEscape(authority) + ")" + RegexEscape(path);
         regex = ReplacePlaceholders(regex);
-        return regex + "(?:\\?.*)?$";
+        return regex + "/?(?:\\?.*)?$";
     }
 
     private static string RegexEscape(string value) => System.Text.RegularExpressions.Regex.Escape(value);
 
+    private static string RestoreObservedSegmentCase(string template, string observed)
+    {
+        var parts = Regex.Split(template, "(\\{(?:guid|date|id|value)\\})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var expression = "^" + string.Concat(parts.Select((part, index) => index % 2 == 0
+            ? "(?<literal" + index + ">" + RegexEscape(part) + ")" : "[^/?#]+")) + "$";
+        var match = Regex.Match(observed, expression, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return !match.Success ? template : string.Concat(parts.Select((part, index) => index % 2 == 0 ? match.Groups["literal" + index].Value : part));
+    }
+
     private static string ReplacePlaceholders(string value) => value
-        .Replace("\\{guid\\}", "[^/?#]+", StringComparison.OrdinalIgnoreCase)
-        .Replace("\\{date\\}", "[^/?#]+", StringComparison.OrdinalIgnoreCase)
-        .Replace("\\{id\\}", "[^/?#]+", StringComparison.OrdinalIgnoreCase)
-        .Replace("\\{value\\}", "[^/?#]+", StringComparison.OrdinalIgnoreCase);
+        .Replace(RegexEscape("{guid}"), "[^/?#]+", StringComparison.OrdinalIgnoreCase)
+        .Replace(RegexEscape("{date}"), "[^/?#]+", StringComparison.OrdinalIgnoreCase)
+        .Replace(RegexEscape("{id}"), "[^/?#]+", StringComparison.OrdinalIgnoreCase)
+        .Replace(RegexEscape("{value}"), "[^/?#]+", StringComparison.OrdinalIgnoreCase);
 
     private static string[] CombineRegexes(string[] regexes)
     {

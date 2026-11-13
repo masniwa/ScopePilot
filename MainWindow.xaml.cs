@@ -364,6 +364,17 @@ public partial class MainWindow : Window
         if (sender is Button { Tag: string fileName }) _viewModel.OpenSelectedRunArtifact(fileName);
     }
 
+    private async void ViewManualOperations_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_viewModel.CanViewManualOperations || _viewModel.SelectedRun is not { } run) return;
+        try
+        {
+            var result = await _viewModel.ReadSelectedRunManualOperationsAsync();
+            new ManualOperationsWindow($"{run.StartedAtDisplay} / {run.Role}", result) { Owner = this }.ShowDialog();
+        }
+        catch (Exception ex) { ShowProjectError($"手動項目を表示できませんでした。\n{ex.Message}"); }
+    }
+
     private void RolesTextBox_TextChanged(object sender, TextChangedEventArgs e) =>
         Dispatcher.BeginInvoke(new Action(_viewModel.UpdateRoleOptions));
 

@@ -42,7 +42,8 @@ public sealed class ZapCliRunner
         if (package.PlanPath != ProjectPaths.Resolve(project, package.PlanEvidence.LocalPath) ||
             package.HarPath != ProjectPaths.Resolve(project, package.HarEvidence.LocalPath))
             throw new InvalidDataException("計画・HARの証拠参照と実行パスが一致しません。");
-        using var harDocument = JsonDocument.Parse(await File.ReadAllTextAsync(package.HarPath, cancellationToken));
+        await using var harInput = File.OpenRead(package.HarPath);
+        using var harDocument = await JsonDocument.ParseAsync(harInput, cancellationToken: cancellationToken);
         var recordedTargets = harDocument.RootElement.GetProperty("log").GetProperty("entries").EnumerateArray()
             .Select(x => x.GetProperty("request").GetProperty("url").GetString())
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -51,8 +52,8 @@ public sealed class ZapCliRunner
                 ApiRequestFormatter.EnsureAllowed(x!, project.AllowedOrigins);
                 return ApiRequestFormatter.ValidateUrl(x!).AbsoluteUri;
             })
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (!recordedTargets.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        if (!recordedTargets.ToHashSet(StringComparer.Ordinal)
                 .SetEquals(package.RecordedTargets.Select(x => ApiRequestFormatter.ValidateUrl(x).AbsoluteUri)))
             throw new InvalidDataException("ZAPパッケージの観測済みURLが現在の採用対象と一致しません。新しいパッケージを作成してください。");
         if (package.ActiveScan != project.DiagnosticTools.EnableZapActiveScan)

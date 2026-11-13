@@ -21,6 +21,10 @@ public sealed class DocumentHints
 public sealed class DocumentEndpointHint
 {
     public string Url { get; set; } = string.Empty;
+    // Preserve what the document actually said separately from an inferred target origin.
+    public string OriginalUrl { get; set; } = string.Empty;
+    public string Resolution { get; set; } = "absolute";
+    public bool IsTemplate { get; set; }
     public string Kind { get; set; } = "other";
     public string Priority { get; set; } = "normal";
     public string Reason { get; set; } = string.Empty;
@@ -43,6 +47,7 @@ public sealed class DocumentPriorityRule
     public string[] Keywords { get; set; } = [];
     public string Priority { get; set; } = "high";
     public string Note { get; set; } = string.Empty;
+    public string SourceReference { get; set; } = string.Empty;
 }
 
 public sealed class DocumentApiVariation

@@ -63,7 +63,40 @@ public sealed class ProjectStore
             item.SourceRunDirectory = ResolveStoredPath(project, item.SourceRunDirectory);
         foreach (var item in project.Findings)
             item.SourceRunDirectory = ResolveStoredPath(project, item.SourceRunDirectory);
+        UpgradeCaseSensitiveCandidatePatterns(project);
+        new CandidateSelector().RefreshPriorities(project);
         return project;
+    }
+
+    private static void UpgradeCaseSensitiveCandidatePatterns(EngagementProject project)
+    {
+        project.Candidates ??= [];
+        project.AdoptedCandidatePatterns ??= [];
+        project.DeferredCandidatePatterns ??= [];
+        project.ExplicitlyReviewedCandidatePatterns ??= [];
+        var changes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var candidate in project.Candidates)
+        {
+            var oldPattern = RequestOperationIdentity.NormalizePattern(candidate.Pattern);
+            var current = RequestOperationIdentity.Pattern(candidate.Representative);
+            // Older versions folded URL paths to lower case. Only migrate a
+            // stored candidate when its observed representative proves the case;
+            // do not turn unrelated case-distinct URLs into the same candidate.
+            if (oldPattern == current || !oldPattern.Equals(current, StringComparison.OrdinalIgnoreCase) ||
+                PatternSuffix(oldPattern) != PatternSuffix(current)) continue;
+            changes[oldPattern] = current;
+            candidate.Pattern = current;
+        }
+        foreach (var cache in new[] { project.AdoptedCandidatePatterns, project.DeferredCandidatePatterns, project.ExplicitlyReviewedCandidatePatterns })
+            for (var index = 0; index < cache.Count; index++)
+                if (changes.TryGetValue(RequestOperationIdentity.NormalizePattern(cache[index]), out var current))
+                    cache[index] = current;
+    }
+
+    private static string PatternSuffix(string pattern)
+    {
+        var index = pattern.IndexOfAny(['?', '#']);
+        return index < 0 ? "" : pattern[index..];
     }
 
     public static string ResolveStoredPath(EngagementProject project, string path) => string.IsNullOrWhiteSpace(path)

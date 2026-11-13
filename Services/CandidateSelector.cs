@@ -4,30 +4,40 @@ namespace ScopePilot.Services;
 
 public sealed class CandidateSelector
 {
-    public IReadOnlyList<DiagnosticCandidate> Select(IEnumerable<ObservedRequest> requests, GuidelineSelectionOptions? guidelines = null) => requests
+    public IReadOnlyList<DiagnosticCandidate> Select(EngagementProject project) => Select(project.Requests, project.Guidelines, DocumentPriorityEvidence.ValidHints(project));
+
+    public IReadOnlyList<DiagnosticCandidate> Select(IEnumerable<ObservedRequest> requests, GuidelineSelectionOptions? guidelines = null, DocumentHints? documentHints = null) => requests
         .Where(x => Uri.TryCreate(x.Url, UriKind.Absolute, out _))
-        .GroupBy(x => $"{(x.Method ?? "GET").ToUpperInvariant()} {UrlPatternNormalizer.NormalizeForSelection(x.Url ?? string.Empty)}", StringComparer.OrdinalIgnoreCase)
-        .Select(group => CreateCandidate(group, guidelines ?? new GuidelineSelectionOptions()))
-        .OrderByDescending(x => x.Selected)
-        .ThenByDescending(x => Score(x))
-        .ThenBy(x => x.Pattern, StringComparer.OrdinalIgnoreCase)
+        .GroupBy(RequestOperationIdentity.Pattern, StringComparer.Ordinal)
+        .Select(group => CreateCandidate(group, guidelines ?? new GuidelineSelectionOptions(), documentHints))
+        .OrderByDescending(x => x.Priority)
+        .ThenBy(x => x.Pattern, StringComparer.Ordinal)
         .ToArray();
 
-    private static DiagnosticCandidate CreateCandidate(IGrouping<string, ObservedRequest> group, GuidelineSelectionOptions guidelines)
+    private static DiagnosticCandidate CreateCandidate(IGrouping<string, ObservedRequest> group, GuidelineSelectionOptions guidelines, DocumentHints? documentHints)
     {
-        var assessed = group.Select(request => (Request: request, Assessment: GuidelineSelectionPolicy.Evaluate(request, guidelines))).ToArray();
-        var chosen = assessed.OrderByDescending(x => x.Assessment.Selected)
+        var assessed = group.Select(request =>
+        {
+            var assessment = GuidelineSelectionPolicy.Evaluate(request, guidelines);
+            return (Request: request, Assessment: assessment, Priority: DiagnosticPriorityPolicy.Evaluate(request, assessment, guidelines, documentHints));
+        }).ToArray();
+        var chosen = assessed.OrderByDescending(x => x.Priority.Score)
+            .ThenByDescending(x => x.Assessment.Selected)
+            .ThenByDescending(x => x.Request.BurpProxyRequestId.HasValue)
             .ThenByDescending(x => x.Request.FormCount)
             .ThenByDescending(x => x.Request.PageInspected)
             .First();
         var evidence = assessed.Where(x => x.Assessment.Selected == chosen.Assessment.Selected)
             .SelectMany(x => x.Assessment.Signals).Distinct(StringComparer.Ordinal).ToArray();
-        var references = assessed.SelectMany(x => x.Assessment.References).Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal).ToArray();
         var roles = assessed.Select(x => ObservedRequestIdentity.NormalizeRole(x.Request.Role))
             .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var priority = DiagnosticPriorityPolicy.WithRoles(chosen.Priority, roles, guidelines);
+        var references = assessed.SelectMany(x => x.Assessment.References).Concat(priority.References).Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal).ToArray();
         var count = assessed.Length;
         var reason = chosen.Assessment.Reason;
+        var selected = priority.Score > 0;
+        if (selected && !chosen.Assessment.Selected) reason = "静的な形式ですが、入力ドキュメントに機能の記載があるため診断候補として残します。";
         if (count > 1) reason += $" 同一URL構造の{count:N0}件をまとめ、このURLを代表にしています。";
         var trace = string.Join(Environment.NewLine, new[]
         {
@@ -38,14 +48,18 @@ public sealed class CandidateSelector
             $"5. 観測ロール: {string.Join("、", roles)}",
             $"6. 判定材料: {string.Join("／", evidence)}",
             $"7. 参照基準: {string.Join("、", references)}",
-            $"最終判定: {(chosen.Assessment.Selected ? "採用" : "除外候補")}。メタデータによる一次選定であり、安全性や脆弱性の証明ではありません。"
+            $"8. 診断優先度: {priority.Reason}",
+            $"自動選定: {(selected ? "採用候補" : "除外候補")}。優先度はScopePilot独自の診断順序の目安であり、脆弱性の確率・深刻度やガイドライン公式の点数ではありません。"
         });
         return new DiagnosticCandidate
         {
-            Selected = chosen.Assessment.Selected,
-            Confidence = chosen.Assessment.Confidence,
+            Selected = selected,
+            Priority = priority.Score,
+            PriorityReason = priority.Reason,
+            PriorityScoringVersion = DiagnosticPriorityPolicy.Version,
+            Confidence = selected != chosen.Assessment.Selected ? "低" : chosen.Assessment.Confidence,
             Category = chosen.Assessment.Category,
-            Decision = chosen.Assessment.Selected ? "候補" : "除外候補",
+            Decision = selected ? "候補" : "除外候補",
             Reason = reason,
             DecisionTrace = trace,
             DiagnosticCaution = chosen.Assessment.Caution,
@@ -56,21 +70,28 @@ public sealed class CandidateSelector
         };
     }
 
-    private static int Score(DiagnosticCandidate candidate)
+    public void RefreshPriorities(EngagementProject project)
     {
-        var score = (candidate.Representative.Method ?? "GET").ToUpperInvariant() is not ("GET" or "HEAD" or "OPTIONS") ? 20 : 0;
-        score += candidate.Category switch
+        // Recalculate legacy scores in memory, preserving user decisions and the file on disk.
+        project.Requests ??= [];
+        project.Candidates ??= [];
+        project.Guidelines ??= new();
+        var hints = DocumentPriorityEvidence.ValidHints(project);
+        var groups = project.Requests.Where(x => Uri.TryCreate(x.Url, UriKind.Absolute, out _))
+            .GroupBy(Key, StringComparer.Ordinal).ToDictionary(x => x.Key, x => x.ToArray(), StringComparer.Ordinal);
+        foreach (var candidate in project.Candidates)
         {
-            "認証・セッション" => 40,
-            "管理・権限" => 35,
-            "ファイル処理" => 30,
-            "AI機能" => 30,
-            "運用・クラウド機能" => 27,
-            "外部連携" => 25,
-            "状態変更" => 20,
-            "API" or "検索・入力" or "入力パラメーター" => 15,
-            _ => 5
-        };
-        return score;
+            var requests = groups.GetValueOrDefault(candidate.Pattern) ?? [candidate.Representative];
+            var rescored = requests.GroupBy(_ => candidate.Pattern).Select(x => CreateCandidate(x, project.Guidelines, hints)).Single();
+            candidate.Priority = rescored.Priority;
+            candidate.PriorityReason = rescored.PriorityReason;
+            candidate.PriorityScoringVersion = rescored.PriorityScoringVersion;
+            candidate.Confidence = rescored.Confidence;
+            candidate.GuidelineBasis = rescored.GuidelineBasis;
+            candidate.DecisionTrace = rescored.DecisionTrace;
+            candidate.Representative = rescored.Representative;
+        }
     }
+
+    private static string Key(ObservedRequest request) => RequestOperationIdentity.Pattern(request);
 }

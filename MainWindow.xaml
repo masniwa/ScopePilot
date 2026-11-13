@@ -27,8 +27,12 @@
                 <Style.Triggers><DataTrigger Binding="{Binding IsZapTarget}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
             </Style>
             <Style x:Key="BurpOnly" TargetType="FrameworkElement">
-                <Setter Property="Visibility" Value="Visible" />
-                <Style.Triggers><DataTrigger Binding="{Binding IsZapTarget}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers><DataTrigger Binding="{Binding IsBurpTarget}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+            </Style>
+            <Style x:Key="BurpAiOnly" TargetType="FrameworkElement">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers><DataTrigger Binding="{Binding IsBurpAiPromptTarget}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
             </Style>
         </ResourceDictionary>
     </Window.Resources>
@@ -246,14 +250,14 @@
                                             <TextBlock TextWrapping="Wrap"><Run Text="APIドキュメントモード：" FontWeight="SemiBold" /><Run Text="選んだロールを、生成するリクエストの下書きとAIへの指示に記録します。ログインの代行や認証情報の補完は行いません。トークンなどの値は、下書きの置換値で確認・補完してください。" /></TextBlock>
                                         </Border>
 
-                                        <TextBlock Text="自動実行しない操作（1行1件）" FontWeight="SemiBold" />
+                                        <TextBlock Text="自動実行しない操作（1行1件・文章の意味で判断）" FontWeight="SemiBold" />
                                         <TextBox Text="{Binding Project.ForbiddenActions, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" Height="120" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="自動実行しない操作" />
                                         <Border Background="{DynamicResource InfoBackground}" BorderBrush="{DynamicResource InfoBorder}" BorderThickness="1" CornerRadius="4" Padding="12,10" Margin="0,-8,0,0">
                                             <StackPanel>
-                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="記入するもの：" FontWeight="SemiBold" /><Run Text="禁止したい表示語句または送信先URLを1行1件で書きます。例：削除、Delete、購入、決済はそれぞれ別の行です。自動翻訳や意味での判定は行いません。「・」も文字の一部として照合します。" /></TextBlock>
-                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="判断のしかた：" FontWeight="SemiBold" /><Run Text="初期GET巡回・フォーム自動送信・AI操作のすべてで、操作の表示名と送信先URLへ大文字小文字を区別しない部分一致を適用します。通常巡回の組み込み除外は維持します。AI入力・送信モードではHTTPメソッドによる拒否はありませんが、この欄の禁止指定は優先します。ログイン・ログアウトを許可する場合は関連する禁止語句とURLを外してください。" /></TextBlock>
-                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="結果：" FontWeight="SemiBold" /><Run Text="巡回の除外はcrawl-coverage.json、AI操作・送信の遮断はblocked-actions.jsonl／blocked-requests.jsonlへ記録します。画面探索のAIにも禁止事項として渡し、報告書にも「自動実行しない操作」として載ります。" /></TextBlock>
-                                                <TextBlock TextWrapping="Wrap"><Run Text="注意：" FontWeight="SemiBold" /><Run Text="実行時の設定を探索ブラウザ全体へ適用するため、認証待ちの手動操作にも効きます。実行中の編集は次の探索から反映されます。フォーム自動送信では禁止指定に加え、従来どおりパスワード欄・ファイル欄を含むフォームも除外します。手動対象というAIの分類と、この欄の禁止指定は別です。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="記入するもの：" FontWeight="SemiBold" /><Run Text="実行させたくない操作を文章で1行1件書きます。例：「システム全体の設定を変更しない」「購入・決済をしない。購入履歴の閲覧は可」。禁止する対象と、許可する例外を具体的に書いてください。カンマを含む文章もそのままAIへ渡します。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="判断のしかた：" FontWeight="SemiBold" /><Run Text="AIが文章の意味を解釈し、画面の文脈・操作対象・予想される副作用と照合します。遷移・入力・クリックの呼び出しごとに全条件の判断を提出し、未判断・禁止・判断不能ならブラウザへ渡しません。明示したURL・絶対パスの送信禁止、許可Origin、実行上限も優先します。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"><Run Text="結果：" FontWeight="SemiBold" /><Run Text="操作前の判断はpolicy-decisions.jsonl、実行しなかった操作と理由は探索結果へ記録します。禁止文がある場合、開始画面・認証到達後の巡回とフォーム送信はAIの判断へ引き継ぎます。AIによる入力・送信がOFFなら、判断後も入力・保存は実行しません。" /></TextBlock>
+                                                <TextBlock TextWrapping="Wrap"><Run Text="注意：" FontWeight="SemiBold" /><Run Text="意味の解釈は探索を担当するAIが行います。用途や副作用を確認できない操作は実行せず残します。開始URLを開く準備と、人間による認証は別です。実行中の編集は次の探索から反映されます。特殊操作の手動分類と禁止指定は別で、片付け・ログアウトでも禁止条件を解除しません。" /></TextBlock>
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>
@@ -278,7 +282,7 @@
                                         <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Project.MaxRequests}" AutomationProperties.Name="最大通信数" />
                                         <StackPanel Grid.Row="3" Grid.ColumnSpan="2">
                                         <CheckBox IsChecked="{Binding CrawlFormSubmissions, Mode=TwoWay}" Margin="0,8,0,0" AutomationProperties.Name="フォーム送信を含める">
-                                            <TextBlock Text="フォーム送信を含める（無害な仮値で各フォームを1回送信し、通信をHARに記録。ログイン・アップロード・禁止操作フォームは除外）" TextWrapping="Wrap" />
+                                            <TextBlock Text="フォーム送信を含める（無害な仮値で各フォームを1回送信。禁止文がある場合はAIによる入力・送信もONにしてAI判断後に実行。ログイン・アップロード等は別扱い）" TextWrapping="Wrap" />
                                         </CheckBox>
                                         <CheckBox IsChecked="{Binding AiInteractions, Mode=TwoWay}" Margin="0,12,0,0" AutomationProperties.Name="AIによる入力・送信を許可する">
                                             <TextBlock Text="AIによる入力・送信を許可する（テストデータで画面を操作し、POST/PUT/PATCH/DELETE等を記録。メソッドの制限なし、ログイン・ログアウトも対象。案件の禁止操作・許可Origin・上限は適用。実データが変更されます）" TextWrapping="Wrap" />
@@ -440,7 +444,7 @@
                         </Border>
                     </Grid>
                 </TabItem>
-                <TabItem Header="候補レビュー" Tag="代表パターンの判断根拠を確認し、診断対象を採用・除外します。">
+                <TabItem Header="候補レビュー" Tag="選択したガイドラインを基に診断優先度を0〜100で表示します。高い順に確認し、診断対象を採用・除外します。">
                     <Grid Margin="0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -454,7 +458,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <TextBlock Text="{Binding CandidateSummary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8" />
                             <WrapPanel Grid.Row="1">
                                 <Button Content="保存" Command="{Binding SaveCommand}" AutomationProperties.Name="候補レビューを保存" />
@@ -500,10 +504,13 @@
                                 <Button Content="表示中を除外" Command="{Binding ExcludeVisibleCandidatesCommand}" />
                             </WrapPanel>
                             <DockPanel Grid.Row="2">
-                                <Button DockPanel.Dock="Right" Content="候補を再生成" Command="{Binding GenerateCandidatesCommand}" />
+                                <Button DockPanel.Dock="Right" Content="候補・優先度を再計算" Command="{Binding GenerateCandidatesCommand}" ToolTip="保存済みHARの要求内容と、入力ドキュメントの補助情報を使って再採点します。文書の抽出が必要な場合は設定したAIを利用します。探索通信は送信しません。" />
                                 <Button DockPanel.Dock="Right" Content="判断をリセット" Click="ResetCandidateDecisions_Click" Style="{StaticResource EditableButton}" ToolTip="この案件の採用・除外記録を解除して再判定します。" />
                                 <TextBlock Text="{Binding CandidateFilterSummary}" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
-                            </DockPanel>
+                            </DockPanel><StackPanel Grid.Row="3"><WrapPanel Style="{StaticResource EditableWhenIdle}">
+<TextBlock Text="全候補の上位" VerticalAlignment="Center" Margin="0,0,4,8" /><TextBox Text="{Binding PriorityTopCount, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,4,8" AutomationProperties.Name="優先度上位の件数" /><Button Content="件だけ採用" Command="{Binding AdoptTopPriorityCommand}" />
+<TextBlock Text="全候補で優先度" VerticalAlignment="Center" Margin="12,0,4,8" /><TextBox Text="{Binding PriorityMinimum, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,4,8" AutomationProperties.Name="採用する優先度の下限" /><Button Content="点以上だけ採用" Command="{Binding AdoptMinimumPriorityCommand}" /><Button Content="Burp IDを照合" Command="{Binding LinkBurpHistoryCommand}" />
+</WrapPanel><TextBlock Text="{Binding PriorityBulkStatus}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" /><TextBlock Text="{Binding BurpHistoryStatus}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" /></StackPanel>
                         </Grid>
                         <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredCandidates}" SelectedItem="{Binding SelectedCandidate}" AutoGenerateColumns="False" CanUserAddRows="False" GridLinesVisibility="Horizontal" CellEditEnding="CandidateGrid_CellEditEnding" Style="{StaticResource ReviewGrid}" AutomationProperties.Name="診断対象候補">
                             <DataGrid.Columns>
@@ -514,10 +521,18 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="判定" Binding="{Binding Decision}" Width="85" MinWidth="85" IsReadOnly="True" />
+                                <DataGridTextColumn Header="優先度" Binding="{Binding Priority}" SortMemberPath="Priority" Width="75" MinWidth="75" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding PriorityReason}" />
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
                                 <DataGridTextColumn Header="確信度" Binding="{Binding Confidence}" Width="70" MinWidth="70" IsReadOnly="True" />
                                 <DataGridTextColumn Header="分類" Binding="{Binding Category}" Width="130" MinWidth="130" IsReadOnly="True" />
                                 <DataGridTextColumn Header="Method" Binding="{Binding Representative.Method}" Width="75" MinWidth="75" IsReadOnly="True" />
+                                <DataGridTextColumn Header="処理指定" Binding="{Binding Operation}" Width="120" MinWidth="85" IsReadOnly="True" />
+                                <DataGridTextColumn Header="Burp ID" Binding="{Binding BurpRequestIdDisplay}" Width="85" MinWidth="75" IsReadOnly="True" />
                                 <DataGridTemplateColumn Header="代表URL" Width="*" IsReadOnly="True" MinWidth="260">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -543,14 +558,16 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <TextBlock Text="{Binding SelectedCandidate.Reason}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <TextBlock Text="診断優先度：100に近いほど先に診断。0は通常の機能別診断からの除外候補です。採用・除外は個別に変更できます。" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,8" />
+                                    <TextBlock Text="{Binding SelectedCandidate.PriorityReason}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <TextBlock Text="{Binding SelectedCandidate.Reason}" TextWrapping="Wrap" Margin="0,0,0,8" />
                                     <TextBlock Text="{Binding SelectedCandidate.DiagnosticCaution}" TextWrapping="Wrap" Margin="0,0,0,12" />
                                     <TextBlock Text="{Binding SelectedCandidate.GuidelineBasis}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,12" />
                                     <TextBlock Text="{Binding SelectedCandidate.DecisionTrace}" TextWrapping="Wrap" FontFamily="Consolas, Yu Gothic UI" LineHeight="22" />
                                 </StackPanel>
                             </ScrollViewer>
                         </GroupBox>
-                        <TextBlock Grid.Row="4" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Text="採用・除外は自動保存されます。除外したパターンは次回のAI確認から外れ、新規パターンと採用済み候補は対象に残ります。" />
+                        <TextBlock Grid.Row="4" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Text="採用・除外の変更は［保存］で案件へ反映します。除外したパターンは次回のAI確認から外れ、新規パターンと採用済み候補は対象に残ります。" />
                         <GridSplitter Grid.Row="2" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" VerticalAlignment="Center" AutomationProperties.Name="一覧と詳細の高さを調整" />
                         <Border Grid.Row="1">
                             <Border.Style>
@@ -637,6 +654,7 @@
                         </Grid.RowDefinitions>
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Content="保存" Command="{Binding SaveCommand}" AutomationProperties.Name="実行履歴の変更を保存" />
+                            <Button x:Name="ViewManualOperationsButton" DockPanel.Dock="Right" Content="手動項目を確認" Click="ViewManualOperations_Click" IsEnabled="{Binding CanViewManualOperations}" />
                             <TextBlock Text="{Binding RunHistorySummary}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" TextWrapping="Wrap" />
                         </DockPanel>
                         <DataGrid Grid.Row="1" ItemsSource="{Binding RunHistory}" SelectedItem="{Binding SelectedRun}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" GridLinesVisibility="Horizontal">
@@ -719,13 +737,13 @@
                             <StackPanel>
                                 <TextBlock Text="引き渡し先を選択" FontWeight="SemiBold" Margin="0,0,0,8" />
                                 <Grid Style="{StaticResource EditableWhenIdle}">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <RadioButton x:Name="BurpHandoffChoice" GroupName="HandoffTool" IsChecked="{Binding IsBurpTarget, Mode=TwoWay, NotifyOnSourceUpdated=True}" Style="{StaticResource HandoffToolCard}" AutomationProperties.Name="引き渡し先 Burp Suite">
                                         <StackPanel><TextBlock Text="Burp Suite" FontWeight="SemiBold" /><TextBlock Text="Scope・HTTPを出力" FontSize="12" Foreground="{DynamicResource TextSecondary}" /></StackPanel>
                                     </RadioButton>
                                     <RadioButton x:Name="ZapHandoffChoice" Grid.Column="2" GroupName="HandoffTool" IsChecked="{Binding IsZapTarget, Mode=TwoWay, NotifyOnSourceUpdated=True}" Style="{StaticResource HandoffToolCard}" AutomationProperties.Name="引き渡し先 ZAP">
                                         <StackPanel><TextBlock Text="ZAP" FontWeight="SemiBold" /><TextBlock Text="HAR解析・警告の確認" FontSize="12" Foreground="{DynamicResource TextSecondary}" /></StackPanel>
-                                    </RadioButton>
+                                    </RadioButton><RadioButton x:Name="BurpAiHandoffChoice" Grid.Column="4" GroupName="HandoffTool" IsChecked="{Binding IsBurpAiPromptTarget, Mode=TwoWay, NotifyOnSourceUpdated=True}" Style="{StaticResource HandoffToolCard}" AutomationProperties.Name="引き渡し先 Burp+mcp+AIプロンプト"><StackPanel><TextBlock Text="Burp+mcp+AIプロンプト" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="Request IDを優先度順に出力" FontSize="12" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" /></StackPanel></RadioButton>
                                 </Grid>
                             </StackPanel>
                         </Border>
@@ -736,7 +754,7 @@
                             <Button Content="出力フォルダーを開く" Command="{Binding OpenBurpExportFolderCommand}" />
                             <StackPanel Style="{StaticResource ZapOnly}"><Button x:Name="ZapJapaneseReportButton" Content="日本語Markdownを出力" Command="{Binding ExportFindingsCommand}" /></StackPanel>
                         </WrapPanel>
-                        <GroupBox Grid.Row="2" Header="{Binding BurpListHeader}" Style="{StaticResource BurpOnly}">
+                        <GroupBox Grid.Row="2" Header="Burp+mcp+AIへの引き渡し文" Style="{StaticResource BurpAiOnly}"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><WrapPanel><Button Content="Burp IDを照合" Command="{Binding LinkBurpHistoryCommand}" /><Button Content="プロンプトをコピー" Command="{Binding CopyBurpAiPromptCommand}" /></WrapPanel><TextBlock Grid.Row="1" Text="{Binding BurpAiPromptStatus}" TextWrapping="Wrap" Margin="0,0,0,8" /><TextBox Grid.Row="2" Text="{Binding BurpAiPrompt, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas, Yu Gothic UI" MinHeight="130" AutomationProperties.Name="Burp+mcp+AIプロンプト" /></Grid></GroupBox><GroupBox Grid.Row="2" Header="{Binding BurpListHeader}" Style="{StaticResource BurpOnly}">
                           <Grid>
                            <Grid Style="{StaticResource WebOnly}">
                             <ListBox ItemsSource="{Binding BurpScopeRegexes}" SelectedItem="{Binding SelectedBurpScopeRegex}" FontFamily="Consolas" HorizontalContentAlignment="Stretch">

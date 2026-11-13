@@ -34,7 +34,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="README.md;DISTRIBUTION.md;testing.md;docs\RELEASE-NOTES-0.13.0.md;docs\RELEASING.md">
+    <Content Include="README.md;DISTRIBUTION.md;testing.md;docs\RELEASE-NOTES-0.13.0.md;docs\RELEASING.md;docs\DIAGNOSTIC-PRIORITY.md;docs\QUALITY-RELIABILITY.md;docs\FORBIDDEN-ACTIONS.md">
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="docs\PROJECTS-AND-HANDOFF.md">
@@ -57,7 +57,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="tools\fast-crawl.js;tools\crawl-policy.js;tools\capture-ledger.js;tools\wire-capture.js;tools\zap-browser-record.js;tools\mcp-tool-filter.js">
+    <Content Include="tools\fast-crawl.js;tools\crawl-policy.js;tools\capture-ledger.js;tools\wire-capture.js;tools\har-json.js;tools\zap-browser-record.js;tools\mcp-tool-filter.js;tools\burp-proxy-history.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

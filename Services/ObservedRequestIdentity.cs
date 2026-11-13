@@ -5,7 +5,7 @@ namespace ScopePilot.Services;
 public static class ObservedRequestIdentity
 {
     public static string Build(ObservedRequest request) =>
-        $"{(request.Method ?? "GET").ToUpperInvariant()}\n{request.Url ?? string.Empty}\n{NormalizeRole(request.Role)}";
+        $"{(request.Method ?? "GET").ToUpperInvariant()}\n{request.Url ?? string.Empty}\n{NormalizeRole(request.Role)}\n{RequestOperationIdentity.BodyKey(request)}";
 
     public static string NormalizeRole(string? role)
     {
@@ -17,7 +17,8 @@ public static class ObservedRequestIdentity
             value.Equals("anonymous", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("guest", StringComparison.OrdinalIgnoreCase)) return "未認証";
         if (value.Contains("未確認", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("不明", StringComparison.OrdinalIgnoreCase)) return "認証状態未確認";
+            value.Contains("不明", StringComparison.OrdinalIgnoreCase) || value.Equals("未記録", StringComparison.Ordinal) ||
+            value.Equals("unknown", StringComparison.OrdinalIgnoreCase)) return "認証状態未確認";
         return value;
     }
 

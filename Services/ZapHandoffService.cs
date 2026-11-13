@@ -24,24 +24,34 @@ public sealed class ZapHandoffService
         var activeScan = settings.EnableZapActiveScan;
         var useRecordedAuth = activeScan && settings.UseRecordedAuthentication;
         var maxTargets = ZapActiveScanProfile.NormalizeTargets(settings.MaxActiveScanTargets);
-        var patterns = project.Candidates.Where(x => x.Selected).Select(x => x.Pattern).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var patterns = project.Candidates.Where(x => x.Selected).Select(x => x.Pattern).ToHashSet(StringComparer.Ordinal);
         var entries = new List<JsonElement>();
         var sources = new List<EvidenceReference>();
         foreach (var reference in project.Inputs.Where(x =>
-            (x.Kind == "har" || (settings.IncludeReferenceHars && x.Kind == "har-reference")) && x.Role == project.ActiveRole))
+            (x.Kind == "har" || (settings.IncludeReferenceHars && x.Kind == "har-reference")) &&
+            (x.Role == project.ActiveRole || x.Role == "混在（通信ごとに記録）")))
         {
             await ProjectPaths.VerifyAsync(project, reference);
-            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPaths.Resolve(project, reference.LocalPath)));
+            await using var input = File.OpenRead(ProjectPaths.Resolve(project, reference.LocalPath));
+            using var document = await JsonDocument.ParseAsync(input);
             var index = 0;
             foreach (var entry in document.RootElement.GetProperty("log").GetProperty("entries").EnumerateArray())
             {
                 var pointer = $"/log/entries/{index++}";
+                // A mixed exploration HAR must identify the role on each request.
+                // For legacy single-role imports, keep the explicit reference role.
+                var entryRole = entry.TryGetProperty("_scopepilotRole", out var capturedRole)
+                    ? capturedRole.ValueKind == JsonValueKind.String ? capturedRole.GetString() : null
+                    : reference.Role == project.ActiveRole ? reference.Role : null;
+                if (entryRole != project.ActiveRole) continue;
                 var request = entry.GetProperty("request");
                 var url = request.GetProperty("url").GetString() ?? "";
                 var method = (request.GetProperty("method").GetString() ?? "GET").ToUpperInvariant();
+                var observed = new ObservedRequest { Method = method, Url = url };
+                RequestContentSummary.ReadHar(request, observed);
                 var adopted = project.Mode == InputMode.ApiDocument
                     ? selected.Any(x => x.Item1 == method && x.Url == url)
-                    : patterns.Contains($"{method} {UrlPatternNormalizer.NormalizeForSelection(url)}");
+                    : patterns.Contains(RequestOperationIdentity.Pattern(observed));
                 if (!adopted || !entry.TryGetProperty("response", out var response) ||
                     !response.TryGetProperty("status", out var status) || !status.TryGetInt32(out var code) || code <= 0) continue;
                 ApiRequestFormatter.EnsureAllowed(url, project.AllowedOrigins);
@@ -51,7 +61,7 @@ public sealed class ZapHandoffService
         }
         var recordedTargets = entries.Select(x => x.GetProperty("request").GetProperty("url").GetString() ?? "")
             .Where(x => x.Length > 0).Select(x => ApiRequestFormatter.ValidateUrl(x).AbsoluteUri)
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            .Distinct(StringComparer.Ordinal).ToArray();
         if (activeScan && recordedTargets.Length > maxTargets)
             throw new InvalidOperationException($"アクティブ診断の観測済み対象は{maxTargets}件以下に絞ってください。（診断設定の対象URL上限で変更できます）");
         var auth = useRecordedAuth ? ExtractAuthCookies(entries) : null;
@@ -72,7 +82,9 @@ public sealed class ZapHandoffService
         var threshold = ZapActiveScanProfile.NormalizeThreshold(settings.ActiveScanThreshold);
         if (entries.Count > 0)
         {
-            await File.WriteAllTextAsync(harPath, JsonSerializer.Serialize(new { log = new { version = "1.2", creator = new { name = "ScopePilot", version = "0.12" }, entries } }));
+            // Do not create one giant UTF-16 JSON string for bodies embedded in HAR.
+            await using (var output = new FileStream(harPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                await JsonSerializer.SerializeAsync(output, new { log = new { version = "1.2", creator = new { name = "ScopePilot Fork", version = "0.13.0" }, entries } });
             await File.WriteAllTextAsync(planPath, CreatePlan(recordedTargets, Math.Clamp(project.MaxMinutes, 1, 120), activeScan, strength, threshold,
                 auth?.Header, auth is null ? null : BuildCookieScope(recordedTargets), scanTuning));
             harEvidence = await ProjectPaths.EvidenceAsync(project, harPath, "har");
@@ -98,20 +110,23 @@ public sealed class ZapHandoffService
                 ? "採用対象の保存済み通信を取り込み、明示承認後に対象URLだけをアクティブ診断します。"
                 : "採用対象の保存済み通信をZAPへ引き渡します。"
         }, new JsonSerializerOptions { WriteIndented = true }));
-        await WriteStatusAsync(directory, "prepared", entries.Count, null);
+        await WriteStatusAsync(directory, entries.Count > 0 ? "prepared" : "no-matching-traffic", entries.Count, null);
         await File.WriteAllTextAsync(Path.Combine(directory, "README.txt"),
-            "ZAPへの引き渡し\nselected.harは採用対象の保存済み通信です。" +
-            (activeScan
+            "ZAPへの引き渡し\n" +
+            (entries.Count == 0
+                ? "現在のロールと採用対象に一致する観測済み応答を含むHARがありません。selected.harと実行計画は作成していません。HARの取込・ロール・採用対象を確認してください。\n"
+                : "selected.harは採用対象の保存済み通信です。\n" + (activeScan
                 ? $"zap-active.yamlはパッシブ解析後、明示承認された対象URLだけへアクティブ診断を行います（強度{strength}・閾値{threshold}・{scanTuning.ThreadPerHost}スレッド・{scanTuning.DelayInMs}ms間隔・ルールごとの上限{scanTuning.MaxRuleDurationInMins}分）。攻撃リクエストが送信されます。\n" +
                   (auth is not null
                       ? "記録済みセッションCookieを再利用して認証後の状態で診断します。実行前に認証後URLへの到達確認を行います。Cookieの値はselected.harと同じ扱いで保管してください。\n"
                       : "") +
                   (settings.IncludeReferenceHars ? "探索時に記録したZAP通信（HAR参照）も対象抽出に使用しています。\n" : "")
-                : "zap-passive.yamlは再送せずパッシブ解析します。\n") +
+                : "zap-passive.yamlは再送せずパッシブ解析します。\n")) +
             "必要なZAPアドオン: Automation Framework / Import/Export / Network / Passive Scanner / Report Generation / パッシブ診断ルール" +
             (activeScan ? " / Active Scanner Rules" + (auth is not null ? " / Replacer" : "") : "") + "。不足分は実行前にプロジェクト専用ホームへ導入し、版・SHAをzap-environment.jsonへ記録します。\n" +
             "［Playwrightで記録］で収集したHAR・trace・Historyの対応は元の記録フォルダーのbrowser-zap-correlation.jsonにあります。ロールはラベルであり、主体・実影響の確認を意味しません。\n" +
-            "API下書きのrequests/*.httpはZAPのManual Request Editorへ貼り付けてレビューできます。下書きには観測済み応答がないため、それだけでは診断開始できません。\n" +
+            (project.Mode == InputMode.ApiDocument
+                ? "API下書きのrequests/*.httpはZAPのManual Request Editorへ貼り付けてレビューできます。下書きには観測済み応答がないため、それだけでは診断開始できません。\n" : "") +
             "診断警告は実影響未確認として取り込みます。原本HAR・ログ・ZAPレポートには秘密情報が含まれる可能性があるため、ローカル証拠として保管してください。\n");
         return new(directory, planPath, harPath, entries.Count, harEvidence, planEvidence, activeScan, recordedTargets,
             useRecordedAuth, auth?.Header, auth?.Names, auth is null ? null : BuildCookieScope(recordedTargets));
@@ -160,9 +175,9 @@ public sealed class ZapHandoffService
     {
         var limits = (tuning ?? ZapScanTuning.Defaults).Normalized();
         var targets = targetUrls.Select(x => ApiRequestFormatter.ValidateUrl(x).AbsoluteUri)
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            .Distinct(StringComparer.Ordinal).ToArray();
         var roots = targets.Select(x => new Uri(x).GetLeftPart(UriPartial.Path))
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            .Distinct(StringComparer.Ordinal).ToArray();
         var plan =
         "env:\n  contexts:\n    - name: scopepilot-recorded\n      urls:\n" +
         string.Concat(roots.Select(x => "        - " + JsonSerializer.Serialize(x) + "\n")) +
