@@ -78,8 +78,8 @@ public sealed class MultipleExplorationDocumentTests
             for (var i = 0; i <= ExplorationDocumentService.MaxDocuments; i++) paths.Add(await DocumentAsync(temp.Path, $"{i}.md", $"Document {i}"));
         else
         {
-            paths.Add(await DocumentAsync(temp.Path, "first.md", kind == "combined-limit" ? new string('a', 125_000) : "Valid document"));
-            paths.Add(await DocumentAsync(temp.Path, kind == "unsupported" ? "second.pdf" : "second.md", kind == "combined-limit" ? new string('b', 125_000) : "%PDF-1.0"));
+            paths.Add(await DocumentAsync(temp.Path, "first.md", kind == "combined-limit" ? new string('a', TextDocumentReader.MaxCharacters / 2) : "Valid document"));
+            paths.Add(await DocumentAsync(temp.Path, kind == "unsupported" ? "second.pdf" : "second.md", kind == "combined-limit" ? new string('b', TextDocumentReader.MaxCharacters / 2) : "%PDF-1.0"));
         }
         await vm.ReadExplorationDocumentsAsync(paths);
         Assert.Single(errors); Assert.False(vm.HasExplorationDocument); Assert.False(vm.HasUnsavedChanges);

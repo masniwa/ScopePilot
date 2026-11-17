@@ -10,6 +10,51 @@ namespace ScopePilot.Tests;
 
 public sealed class ExplorationDocumentTests
 {
+    [Theory]
+    [InlineData(500_000, true)]
+    [InlineData(500_001, false)]
+    public async Task SharedDocumentLimitAcceptsHalfMillionJapaneseCharactersAndRejectsOneMore(int length, bool accepted)
+    {
+        using var temp = new TestFolder();
+        var project = temp.Project();
+        var path = Path.Combine(temp.Path, "large-reference.txt");
+        var content = new string('あ', length);
+        await File.WriteAllTextAsync(path, content, new UTF8Encoding(false));
+        if (accepted)
+        {
+            Assert.Equal(content, await TextDocumentReader.ReadAsync(path));
+            Assert.Equal(content, (await ApiDocumentService.ReadDocumentAsync(path, new())).Content);
+            project.ExplorationDocument = await ExplorationDocumentService.ImportAsync(project, path);
+            Assert.Equal(content, ExplorationDocumentService.CombinedContent(project.ExplorationDocument));
+            project.StartUrl = "https://example.test/";
+            project.AllowedOrigins = "https://example.test";
+            var run = await new ExplorationPackageBuilder().BuildAsync(project);
+            Assert.Contains(content, await CodexExplorationRunner.BuildPromptAsync(run, CancellationToken.None));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() => TextDocumentReader.ReadAsync(path));
+            await Assert.ThrowsAsync<InvalidDataException>(() => ApiDocumentService.ReadDocumentAsync(path, new()));
+            await Assert.ThrowsAsync<InvalidDataException>(() => ExplorationDocumentService.ImportAsync(project, path));
+            Assert.False(Directory.Exists(ProjectPaths.Category(project, "inputs")));
+        }
+    }
+
+    [Fact]
+    public void MultipleDocumentsIncludeHeadingsInHalfMillionCharacterLimit()
+    {
+        var settings = new ExplorationDocumentSettings
+        {
+            Files = [new() { FileName = "one.txt", Content = "a" }, new() { FileName = "two.txt", Content = "b" }]
+        };
+        var headingLength = ExplorationDocumentService.CombinedContent(settings).Length - 2;
+        settings.Files[0].Content = new string('a', 250_000);
+        settings.Files[1].Content = new string('b', 250_000 - headingLength);
+        Assert.Equal(500_000, ExplorationDocumentService.CombinedContent(settings).Length);
+        settings.Files[1].Content += "b";
+        Assert.Throws<InvalidDataException>(() => ExplorationDocumentService.CombinedContent(settings));
+    }
+
     [Fact]
     public async Task DocumentImportAndClearRequireManualSaveAndKeepApiDocumentSeparate()
     {

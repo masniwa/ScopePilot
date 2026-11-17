@@ -4,7 +4,7 @@ namespace ScopePilot.Services;
 
 public static class TextDocumentReader
 {
-    public const int MaxCharacters = 250_000;
+    public const int MaxCharacters = 500_000;
     private static string FormatError => $"UTF-8のテキスト文書（最大{MaxCharacters:N0}文字）を選択してください。PDF・Wordはテキストへ変換してください。";
 
     public static async Task<string> ReadAsync(string path)

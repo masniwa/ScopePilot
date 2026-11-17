@@ -155,7 +155,7 @@
                                 </GroupBox>
                                 <GroupBox x:Name="ExplorationDocumentSection" Header="入力ドキュメント（仕様書・操作手順）" Margin="0,0,0,16" Style="{StaticResource WebGroupBox}">
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource Hint}" Text="対象の仕様書・操作手順を複数選択して、AIの機能理解に使用します。Markdown・TXT・HTML・JSON・YAMLのUTF-8文書を最大20件、資料の見出しを含め合計250,000文字まで追加できます。PDF・Wordはテキストへ変換してください。" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="対象の仕様書・操作手順を複数選択して、AIの機能理解に使用します。Markdown・TXT・HTML・JSON・YAMLのUTF-8文書を最大20件、資料の見出しを含め合計500,000文字まで追加できます。PDF・Wordはテキストへ変換してください。" />
                                         <TextBlock x:Name="ExplorationDocumentLabel" Text="{Binding ExplorationDocumentName}" TextWrapping="Wrap" Margin="0,4,0,8" />
                                         <ListBox ItemsSource="{Binding ExplorationDocuments}" SelectedItem="{Binding SelectedExplorationDocument, Mode=TwoWay}" DisplayMemberPath="FileName" MaxHeight="160" Margin="0,0,0,8" AutomationProperties.Name="探索用資料の一覧" />
                                         <WrapPanel>
